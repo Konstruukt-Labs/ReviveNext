@@ -9,7 +9,7 @@ project(${APP_NAME} LANGUAGES CXX)
 set(JSON_BuildTests OFF CACHE INTERNAL "")
 add_subdirectory(${CMAKE_SOURCE_DIR}/3rdparty/json)
 
-add_executable(${APP_NAME}
+add_executable(${APP_NAME} WIN32
     "src/Main.cpp"
     "src/GameDiscovery.cpp"
     "src/BinaryVdf.cpp"

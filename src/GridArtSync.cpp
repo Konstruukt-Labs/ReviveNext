@@ -4,7 +4,6 @@
 
 #include <windows.h>
 
-#include <cstdio>
 #include <optional>
 #include <string>
 

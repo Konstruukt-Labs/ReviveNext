@@ -4,27 +4,13 @@
 #include "TitleOverrides.h"
 
 #include <windows.h>
-#include <cstdio>
 #include <filesystem>
 
 namespace
 {
-	// Double-clicking a console app from Explorer spawns a brand-new
-	// console just for it, which Windows closes the instant the process
-	// exits - any printed output (including error messages) flashes by
-	// unreadably fast. Running from an already-open terminal doesn't have
-	// this problem, since that console stays open regardless. Detect the
-	// former case (we're the only process attached to this console) and
-	// pause so double-clicking is actually usable.
-	void PauseIfLaunchedByDoubleClick()
+	void ShowError(const std::wstring& message)
 	{
-		DWORD processList[2];
-		if (GetConsoleProcessList(processList, 2) <= 1)
-		{
-			printf("\nPress Enter to close this window...");
-			fflush(stdout);
-			getchar();
-		}
+		MessageBoxW(nullptr, message.c_str(), L"ReviveNext", MB_ICONERROR);
 	}
 
 	// Revive's InputManager::LoadActionManifest() (compiled into the
@@ -49,7 +35,9 @@ namespace
 	//
 	// Broadcasting WM_SETTINGCHANGE only refreshes processes like Explorer
 	// that watch for it live; an already-running Steam won't see this
-	// until it's restarted, same as any other environment variable change.
+	// until it's restarted, same as any other environment variable change
+	// - worth a one-time popup since it's easy to miss otherwise and the
+	// symptom (controllers doing nothing in VR) isn't obviously related.
 	void EnsureActionManifestEnvVar(const std::string& runtimeDir)
 	{
 		std::wstring manifestPath = std::filesystem::path(runtimeDir + "Input\\action_manifest.json").wstring();
@@ -70,7 +58,10 @@ namespace
 			DWORD_PTR result;
 			SendMessageTimeoutW(HWND_BROADCAST, WM_SETTINGCHANGE, 0, (LPARAM)L"Environment",
 				SMTO_ABORTIFHUNG, 5000, &result);
-			printf("Set REVIVE_ACTION_MANIFEST - if this is new or changed, restart Steam once for it to take effect.\n");
+			MessageBoxW(nullptr,
+				L"ReviveNext just configured a setting VR game controllers need.\n\n"
+				L"Restart Steam once for it to take effect.",
+				L"ReviveNext", MB_ICONINFORMATION);
 		}
 
 		RegCloseKey(key);
@@ -91,23 +82,21 @@ namespace
 			if (auto it = titleOverrides.find(game.canonicalName); it != titleOverrides.end())
 				game.title = it->second;
 
-		printf("Found %zu game(s).\n", games.size());
-		for (auto& game : games)
-			printf("  %s\n", game.title.c_str());
-
+		// No console to list them in - the review window's own counter
+		// ("N / M") and per-game title already show what was found, and
+		// that's the only place they'd otherwise need reading.
 		if (games.empty())
 		{
-			printf("Nothing to sync.\n");
+			MessageBoxW(nullptr, L"No installed Meta Horizon (Oculus Rift-platform) games found.", L"ReviveNext", MB_ICONINFORMATION);
 			return 0;
 		}
 
 		auto shortcutsPath = SteamShortcuts::FindShortcutsPath();
 		if (!shortcutsPath)
 		{
-			fprintf(stderr, "Could not locate Steam's shortcuts.vdf (is Steam installed and has it been run at least once?).\n");
+			ShowError(L"Could not locate Steam's shortcuts.vdf (is Steam installed and has it been run at least once?).");
 			return 1;
 		}
-		printf("Syncing to: %s\n", shortcutsPath->c_str());
 
 		// The actual launch target is Revive's own ReviveInjector.exe,
 		// bundled alongside this exe (see runtime/ and CMakeLists.txt) -
@@ -127,7 +116,7 @@ namespace
 
 		if (!std::filesystem::exists(injectorPath))
 		{
-			fprintf(stderr, "ReviveInjector.exe not found next to ReviveNext.exe (expected: %s).\n", injectorPath.c_str());
+			ShowError(L"ReviveInjector.exe not found next to ReviveNext.exe.");
 			return 1;
 		}
 
@@ -135,11 +124,9 @@ namespace
 
 		if (!SteamShortcuts::Sync(games, injectorPath, *shortcutsPath))
 		{
-			fprintf(stderr, "Failed to write shortcuts.vdf.\n");
+			ShowError(L"Failed to write shortcuts.vdf.");
 			return 1;
 		}
-
-		printf("Done. Restart Steam for changes to take effect.\n");
 
 		std::string gridDir = (std::filesystem::path(*shortcutsPath).parent_path() / "grid").string();
 		GridArtSync::Run(games, injectorPath, *shortcutsPath, gridDir);
@@ -155,9 +142,7 @@ namespace
 // (manually, or however it ends up being triggered - see AGENTS.md/README
 // for the current state of that decision) whenever the installed game list
 // might have changed.
-int main()
+int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
 {
-	int result = RunMain();
-	PauseIfLaunchedByDoubleClick();
-	return result;
+	return RunMain();
 }
