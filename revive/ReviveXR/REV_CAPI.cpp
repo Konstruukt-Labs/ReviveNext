@@ -814,6 +814,16 @@ OVR_PUBLIC_FUNCTION(void) ovr_DestroyTextureSwapChain(ovrSession session, ovrTex
 	if (!chain)
 		return;
 
+	// If this chain was Commit()ed but ovr_EndFrame hasn't drained its
+	// deferred wait yet (see Swapchain.cpp/Session.h), remove it here -
+	// otherwise the pointer below would go stale in
+	// session->PendingSwapchainWaits, crashing the next EndFrame.
+	if (session)
+	{
+		auto& pending = session->PendingSwapchainWaits;
+		pending.erase(std::remove(pending.begin(), pending.end(), chain), pending.end());
+	}
+
 	XrResult rs = xrDestroySwapchain(chain->Swapchain);
 	assert(XR_SUCCEEDED(rs));
 	delete[] chain->Images;
@@ -954,7 +964,18 @@ OVR_PUBLIC_FUNCTION(ovrResult) ovr_EndFrame(ovrSession session, long long frameI
 
 	SessionStatusBits status = session->SessionStatus;
 	if (!status.IsVisible)
+	{
+		// Not compositing this frame, but still resolve any waits Commit()
+		// queued - not every game checks IsVisible before rendering, and
+		// leaving them queued would mean they pile up (and Commit() would
+		// see NeedsWait already true next time it's called for the same
+		// chain) for as long as visibility stays off.
+		std::vector<ovrTextureSwapChain> pendingWaits = std::move(session->PendingSwapchainWaits);
+		session->PendingSwapchainWaits.clear();
+		for (ovrTextureSwapChain chain : pendingWaits)
+			CHK_OVR(chain->WaitForImage(session));
 		return ovrSuccess_NotVisible;
+	}
 
 	// We are going to use some space handles here, don't destroy them
 	std::shared_lock<std::shared_mutex> lk(session->TrackingMutex);
@@ -1155,6 +1176,17 @@ OVR_PUBLIC_FUNCTION(ovrResult) ovr_EndFrame(ovrSession session, long long frameI
 	endInfo.layerCount = (uint32_t)layers.size();
 	endInfo.layers = layers.data();
 	CHK_XR(xrEndFrame(session->Session, &endInfo));
+
+	// The wait each Commit() this frame deferred (see Swapchain.cpp) has to
+	// happen before returning - by now the CPU has had the rest of this
+	// frame's work (building every layer, xrEndFrame itself) to give the
+	// GPU a head start, instead of blocking on it immediately after each
+	// individual Commit(). Swapped out first so the list is empty
+	// afterward regardless of whether a wait below fails.
+	std::vector<ovrTextureSwapChain> pendingWaits = std::move(session->PendingSwapchainWaits);
+	session->PendingSwapchainWaits.clear();
+	for (ovrTextureSwapChain chain : pendingWaits)
+		CHK_OVR(chain->WaitForImage(session));
 
 	MicroProfileFlip();
 

@@ -22,8 +22,14 @@ struct ovrTextureSwapChainData
 	XrSwapchainImageBaseHeader* Images;
 	uint32_t Length;
 	uint32_t CurrentIndex;
+	bool NeedsWait = false; // set by Commit(), cleared by WaitForImage()
 
 	virtual ovrResult Commit(ovrSession session);
+
+	// The other half of Commit() - see its comment. Safe to call even when
+	// nothing is pending (e.g. a static-image chain, or a chain already
+	// waited on this frame): a no-op in that case.
+	ovrResult WaitForImage(ovrSession session);
 
 	ovrResult Init(XrSession session, const ovrTextureSwapChainDesc* desc, int64_t format);
 

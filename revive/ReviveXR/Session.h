@@ -61,6 +61,11 @@ struct ovrHmdStruct
 	std::atomic<XrIndexedFrameState*> CurrentFrame;
 	ovrGraphicsLuid Adapter;
 
+	// Swapchains committed this frame (via ovrTextureSwapChainData::Commit)
+	// whose xrWaitSwapchainImage call is deferred to the end of
+	// ovr_EndFrame - see Commit()'s comment for why.
+	std::vector<ovrTextureSwapChain> PendingSwapchainWaits;
+
 	// OpenXR properties
 	XrSystemProperties SystemProperties;
 	XrSystemColorSpacePropertiesFB SystemColorSpace;

@@ -16,11 +16,28 @@ ovrResult ovrTextureSwapChainData::Commit(ovrSession session)
 		XrSwapchainImageAcquireInfo acquireInfo = XR_TYPE(SWAPCHAIN_IMAGE_ACQUIRE_INFO);
 		CHK_XR(xrAcquireSwapchainImage(Swapchain, &acquireInfo, &CurrentIndex));
 
-		// TODO: We could move this wait to the end of EndFrame so we submit earlier
-		XrSwapchainImageWaitInfo waitInfo = XR_TYPE(SWAPCHAIN_IMAGE_WAIT_INFO);
-		waitInfo.timeout = (*session->CurrentFrame).predictedDisplayPeriod;
-		CHK_XR(xrWaitSwapchainImage(Swapchain, &waitInfo));
+		// The wait is deferred to the end of ovr_EndFrame (see
+		// WaitForImage() and session->PendingSwapchainWaits) rather than
+		// done here - this image doesn't need to be ready until the game
+		// starts rendering into it again next frame, so blocking on it
+		// immediately after every Commit() stalls the CPU render thread
+		// whenever the GPU is even slightly behind, for no benefit to this
+		// frame's own submission.
+		NeedsWait = true;
+		session->PendingSwapchainWaits.push_back(this);
 	}
+	return ovrSuccess;
+}
+
+ovrResult ovrTextureSwapChainData::WaitForImage(ovrSession session)
+{
+	if (!NeedsWait)
+		return ovrSuccess;
+
+	XrSwapchainImageWaitInfo waitInfo = XR_TYPE(SWAPCHAIN_IMAGE_WAIT_INFO);
+	waitInfo.timeout = (*session->CurrentFrame).predictedDisplayPeriod;
+	CHK_XR(xrWaitSwapchainImage(Swapchain, &waitInfo));
+	NeedsWait = false;
 	return ovrSuccess;
 }
 
