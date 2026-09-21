@@ -5,11 +5,12 @@
 /revive/Externals/LibOVR/
 /revive/Externals/openxr/
 
-# qmake/MSBuild local build output - see revive/BUILDING.md.
+# MSBuild local build output, both the solution-level output dir and each
+# project's own intermediate dir (e.g. revive/Revive/x64/Release/).
 /revive/Release/
 /revive/Debug/
-/revive/x64/
-/revive/x86/
+/revive/**/x64/
+/revive/**/x86/
 /revive/.vs/
 
 # Agent instructions for working in this repo - deliberately untracked,
