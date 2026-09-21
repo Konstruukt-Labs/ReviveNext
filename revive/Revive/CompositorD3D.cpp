@@ -183,8 +183,14 @@ void CompositorD3D::RenderMirrorTexture(ovrMirrorTexture mirrorTexture)
 	m_pContext->OMSetBlendState(blend_state.Get(), blend_factor, sample_mask);
 	m_pContext->IASetPrimitiveTopology(topology);
 
-	// Flush and release
-	m_pContext->Flush();
+	// Flush and release - the flush is only actually required ahead of
+	// Release() for a D3D11on12-wrapped (i.e. the game itself is D3D12)
+	// texture, per Microsoft's documented contract for that interop; for
+	// an ordinary D3D11 texture (Acquire()/Release() already no-ops in
+	// that case) it was just an unconditional synchronous GPU submission
+	// stall on this per-frame path for no correctness reason.
+	if (texture->UsesD3D11On12())
+		m_pContext->Flush();
 	texture->Release();
 }
 
@@ -245,8 +251,11 @@ void CompositorD3D::RenderTextureSwapChain(vr::EVREye eye, TextureBase* src, Tex
 	m_pContext->OMSetBlendState(blend_state.Get(), blend_factor, sample_mask);
 	m_pContext->IASetPrimitiveTopology(topology);
 
-	// Flush and release
-	m_pContext->Flush();
+	// Flush and release - see the identical comment in RenderMirrorTexture.
+	// Either texture (src, dst) independently may or may not be
+	// D3D11on12-wrapped, so flush if either needs it.
+	if (((TextureD3D*)src)->UsesD3D11On12() || ((TextureD3D*)dst)->UsesD3D11On12())
+		m_pContext->Flush();
 	((TextureD3D*)src)->Release();
 	((TextureD3D*)dst)->Release();
 }

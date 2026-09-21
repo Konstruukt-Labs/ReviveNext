@@ -26,6 +26,15 @@ public:
 	void Acquire() { if (m_pDevice11on12) m_pDevice11on12->AcquireWrappedResources((ID3D11Resource**)m_pTexture.GetAddressOf(), 1); }
 	void Release() { if (m_pDevice11on12) m_pDevice11on12->ReleaseWrappedResources((ID3D11Resource**)m_pTexture.GetAddressOf(), 1); }
 
+	// Only set for a texture wrapping a D3D12 resource via the D3D11on12
+	// interop constructor - see CompositorD3D, which uses this to know
+	// whether a context Flush() is required before Release() (Microsoft's
+	// documented D3D11on12 contract: outstanding D3D11 work referencing a
+	// wrapped resource must be submitted before handing it back to D3D12)
+	// versus being pure overhead for an ordinary D3D11 texture, where
+	// Acquire()/Release() above are already no-ops.
+	bool UsesD3D11On12() const { return m_pDevice11on12 != nullptr; }
+
 	IUnknown* Texture() { if (m_pQueue) return m_pResource.Get(); else return m_pTexture.Get(); };
 	ID3D11ShaderResourceView* Resource() { return m_pSRV.Get(); };
 	ID3D11RenderTargetView* Target() { return m_pRTV.Get(); };
