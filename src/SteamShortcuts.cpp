@@ -259,7 +259,7 @@ std::optional<std::string> SteamShortcuts::FindShortcutsPath()
 }
 
 bool SteamShortcuts::Sync(const std::vector<MetaGame>& games, const std::string& injectorPath,
-	const std::string& shortcutsPath)
+	const std::string& shortcutsPath, std::unordered_map<std::string, uint32_t>* outAppIds)
 {
 	VdfNode root;
 	if (auto bytes = ReadFile(shortcutsPath); !bytes.empty())
@@ -270,19 +270,33 @@ bool SteamShortcuts::Sync(const std::vector<MetaGame>& games, const std::string&
 		root = std::move(*parsed);
 	}
 
-	// Index existing entries this tool previously added, by canonicalName.
-	std::unordered_map<std::string, VdfNode*> existingByName;
-	std::vector<std::string> allKeys;
-	for (auto& [key, entry] : root.AsObject())
-	{
-		allKeys.push_back(key);
-		if (auto name = CanonicalNameFor(entry))
-			existingByName[*name] = &entry;
-	}
-
 	std::unordered_set<std::string> wantedNames;
 	for (auto& game : games)
 		wantedNames.insert(game.canonicalName);
+
+	// Single pass over the existing entries: figure out each one's
+	// canonicalName once (CanonicalNameFor walks and prefix-matches every
+	// tag on the entry, so doing this in two separate passes - index
+	// first, filter later - would just repeat that work per entry for no
+	// reason), drop it if this tool owns it but no longer wants it (i.e.
+	// actually uninstalled), and otherwise move it straight into `kept`
+	// and remember its new, stable address there for the update pass
+	// below to write through. `kept` is a std::map (BinaryVdf.h), so
+	// pointers into it stay valid as more entries are inserted.
+	std::unordered_map<std::string, VdfNode*> existingByName;
+	VdfNode::Object kept;
+	for (auto& [key, entry] : root.AsObject())
+	{
+		auto name = CanonicalNameFor(entry);
+		bool ownedByUs = name.has_value();
+		bool stillWanted = ownedByUs && wantedNames.count(*name) != 0;
+		if (!ownedByUs || stillWanted)
+		{
+			VdfNode& movedEntry = kept[key] = std::move(entry);
+			if (stillWanted)
+				existingByName[*name] = &movedEntry;
+		}
+	}
 
 	// Update in place, or collect entries to add.
 	std::vector<VdfNode> toAdd;
@@ -298,16 +312,14 @@ bool SteamShortcuts::Sync(const std::vector<MetaGame>& games, const std::string&
 		}
 	}
 
-	// Drop entries this tool owns that are no longer in `games`; leave
-	// everything else (the user's own shortcuts) untouched.
-	VdfNode::Object kept;
-	for (auto& [key, entry] : root.AsObject())
+	if (outAppIds)
 	{
-		auto name = CanonicalNameFor(entry);
-		bool ownedByUs = name.has_value();
-		bool stillWanted = ownedByUs && wantedNames.count(*name) != 0;
-		if (!ownedByUs || stillWanted)
-			kept[key] = std::move(entry);
+		for (auto& [name, entry] : existingByName)
+		{
+			auto* appidNode = entry->Find("appid");
+			if (uint32_t appid = appidNode ? (uint32_t)appidNode->AsInt() : 0; appid != 0)
+				(*outAppIds)[name] = appid;
+		}
 	}
 
 	// Re-key everything 0..N-1, as Steam itself does on every save.
@@ -326,26 +338,47 @@ bool SteamShortcuts::Sync(const std::vector<MetaGame>& games, const std::string&
 
 std::unordered_map<std::string, uint32_t> SteamShortcuts::ReadAssignedAppIds(const std::string& shortcutsPath)
 {
+	// ArtMatcherGui calls this on every window refocus and every
+	// game-list navigation while any game still lacks an appid, which
+	// can mean many redundant full read+parses of shortcuts.vdf in a
+	// single sitting where nothing's actually changed. Cache by the
+	// file's last-write-time (a cheap stat, unlike re-parsing the whole
+	// file) instead of unconditionally re-reading every call.
+	static std::string cachedPath;
+	static fs::file_time_type cachedTime;
+	static std::unordered_map<std::string, uint32_t> cachedResult;
+
+	std::error_code ec;
+	auto currentTime = fs::last_write_time(shortcutsPath, ec);
+	if (!ec && cachedPath == shortcutsPath && currentTime == cachedTime)
+		return cachedResult;
+
 	std::unordered_map<std::string, uint32_t> result;
 
 	auto bytes = ReadFile(shortcutsPath);
-	if (bytes.empty())
-		return result;
-
-	auto parsed = VdfNode::Parse(bytes);
-	if (!parsed)
-		return result;
-
-	for (auto& [key, entry] : parsed->AsObject())
+	if (!bytes.empty())
 	{
-		auto canonicalName = CanonicalNameFor(entry);
-		if (!canonicalName)
-			continue;
+		if (auto parsed = VdfNode::Parse(bytes))
+		{
+			for (auto& [key, entry] : parsed->AsObject())
+			{
+				auto canonicalName = CanonicalNameFor(entry);
+				if (!canonicalName)
+					continue;
 
-		auto* appidNode = entry.Find("appid");
-		uint32_t appid = appidNode ? (uint32_t)appidNode->AsInt() : 0;
-		if (appid != 0)
-			result[*canonicalName] = appid;
+				auto* appidNode = entry.Find("appid");
+				uint32_t appid = appidNode ? (uint32_t)appidNode->AsInt() : 0;
+				if (appid != 0)
+					result[*canonicalName] = appid;
+			}
+		}
+	}
+
+	if (!ec)
+	{
+		cachedPath = shortcutsPath;
+		cachedTime = currentTime;
+		cachedResult = result;
 	}
 	return result;
 }

@@ -49,9 +49,15 @@ public:
 	// Uninstalling the game in Meta Horizon (dropping it from `games`) is
 	// the only reliable way to remove one from the Library.
 	//
+	// outAppIds, if given, is filled with the same appid data
+	// ReadAssignedAppIds would return (Sync already has every entry's
+	// appid in hand while writing it back out, so a caller that needs
+	// this right after syncing - see GridArtSync::Run - can skip a
+	// second full read+parse of the file it just wrote).
+	//
 	// Returns false if the file couldn't be read/written.
 	static bool Sync(const std::vector<MetaGame>& games, const std::string& injectorPath,
-		const std::string& shortcutsPath);
+		const std::string& shortcutsPath, std::unordered_map<std::string, uint32_t>* outAppIds = nullptr);
 
 	// Reads back the "appid" Steam itself computed and persisted for each
 	// ReviveNext-owned entry, keyed by canonicalName. Steam assigns this

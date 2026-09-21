@@ -1,6 +1,5 @@
 #include "GridArtSync.h"
 #include "ArtMatcherGui.h"
-#include "SteamShortcuts.h"
 
 #include <windows.h>
 
@@ -36,8 +35,9 @@ namespace
 	}
 }
 
-std::vector<MetaGame> GridArtSync::Run(const std::vector<MetaGame>& games, const std::string& injectorPath,
-	const std::string& shortcutsPath, const std::string& gridDir)
+std::vector<MetaGame> GridArtSync::Run(const std::vector<MetaGame>& games,
+	const std::unordered_map<std::string, uint32_t>& appIds,
+	const std::string& injectorPath, const std::string& shortcutsPath, const std::string& gridDir)
 {
 	if (games.empty())
 		return {};
@@ -47,6 +47,5 @@ std::vector<MetaGame> GridArtSync::Run(const std::vector<MetaGame>& games, const
 	// window is useful (Library removal/review) even without art search.
 	auto apiKey = RegReadSZ(HKEY_CURRENT_USER, L"Software\\ReviveNext", L"SteamGridDbApiKey");
 
-	auto appIds = SteamShortcuts::ReadAssignedAppIds(shortcutsPath);
 	return ArtMatcherGui::Run(games, appIds, injectorPath, shortcutsPath, gridDir, apiKey);
 }

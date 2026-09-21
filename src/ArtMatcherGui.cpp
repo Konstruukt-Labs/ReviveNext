@@ -14,6 +14,7 @@
 #include <fstream>
 #include <optional>
 #include <string>
+#include <thread>
 #include <vector>
 
 #pragma comment(lib, "gdiplus.lib")
@@ -153,9 +154,9 @@ namespace
 			fs::remove(stem + ext, ec);
 	}
 
-	HBITMAP DownloadAndScaleThumbnail(const std::string& url, int thumbW, int thumbH)
+	HBITMAP DownloadAndScaleThumbnail(SteamGridDb& client, const std::string& url, int thumbW, int thumbH)
 	{
-		auto bytes = SteamGridDb::DownloadBytes(url);
+		auto bytes = client.DownloadBytes(url);
 		if (!bytes)
 			return nullptr;
 
@@ -283,14 +284,26 @@ namespace
 		ListView_SetIconSpacing(listview, thumbW + 16, thumbH + 24);
 		ListView_DeleteAllItems(listview);
 
+		// Downloaded concurrently - each thumbnail is an independent
+		// network round-trip, so fetching up to 24 of them one at a time
+		// made populating a single game's grid list take up to 24x as
+		// long as necessary. Win32 UI calls (ImageList_Add etc.) still
+		// happen back on this thread afterward, in order, once every
+		// download has finished.
+		std::vector<HBITMAP> thumbnails(results.size(), nullptr);
+		std::vector<std::thread> workers;
+		for (size_t i = 0; i < results.size(); ++i)
+			workers.emplace_back([&, i] { thumbnails[i] = DownloadAndScaleThumbnail(*g.client, results[i].url, thumbW, thumbH); });
+		for (auto& worker : workers)
+			worker.join();
+
 		for (size_t i = 0; i < results.size(); ++i)
 		{
-			HBITMAP hbmp = DownloadAndScaleThumbnail(results[i].url, thumbW, thumbH);
 			int imageIndex = -1;
-			if (hbmp)
+			if (thumbnails[i])
 			{
-				imageIndex = ImageList_Add(imageList, hbmp, nullptr);
-				DeleteObject(hbmp);
+				imageIndex = ImageList_Add(imageList, thumbnails[i], nullptr);
+				DeleteObject(thumbnails[i]);
 			}
 
 			std::wstring label = std::to_wstring(results[i].width) + L"x" + std::to_wstring(results[i].height);
@@ -479,7 +492,7 @@ namespace
 		ClearExisting(stem);
 
 		SetCursor(LoadCursor(nullptr, IDC_WAIT));
-		bool ok = SteamGridDb::DownloadFile(results[idx].url, stem + ext);
+		bool ok = g.client->DownloadFile(results[idx].url, stem + ext);
 		SetCursor(LoadCursor(nullptr, IDC_ARROW));
 
 		if (ok)

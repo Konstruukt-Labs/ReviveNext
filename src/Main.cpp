@@ -5,6 +5,7 @@
 
 #include <windows.h>
 #include <filesystem>
+#include <unordered_map>
 
 namespace
 {
@@ -122,14 +123,19 @@ namespace
 
 		EnsureActionManifestEnvVar(selfDir);
 
-		if (!SteamShortcuts::Sync(games, injectorPath, *shortcutsPath))
+		// Sync() already sees every entry's Steam-assigned appid while
+		// writing shortcuts.vdf back out - handing it here saves
+		// GridArtSync a second full read+parse of the same file to
+		// recover the same data immediately after.
+		std::unordered_map<std::string, uint32_t> appIds;
+		if (!SteamShortcuts::Sync(games, injectorPath, *shortcutsPath, &appIds))
 		{
 			ShowError(L"Failed to write shortcuts.vdf.");
 			return 1;
 		}
 
 		std::string gridDir = (std::filesystem::path(*shortcutsPath).parent_path() / "grid").string();
-		GridArtSync::Run(games, injectorPath, *shortcutsPath, gridDir);
+		GridArtSync::Run(games, appIds, injectorPath, *shortcutsPath, gridDir);
 
 		return 0;
 	}

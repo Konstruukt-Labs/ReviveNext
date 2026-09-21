@@ -48,26 +48,24 @@ namespace
 	// failure (network error, non-2xx status, etc.) - callers treat that
 	// as "no result" rather than propagating an error, since this is all
 	// optional polish on top of a sync that already succeeded.
-	std::optional<std::string> HttpsGet(const std::wstring& host, const std::wstring& pathAndQuery, const std::string& bearerToken)
+	//
+	// Takes the caller's already-open session handle rather than opening
+	// its own - see SteamGridDb.h's class comment for why. Only the
+	// connect/request handles are created here, so concurrent calls from
+	// multiple threads (sharing one session, each getting its own
+	// connect/request handles) are safe.
+	std::optional<std::string> HttpsGet(HINTERNET session, const std::wstring& host, const std::wstring& pathAndQuery,
+		const std::string& bearerToken)
 	{
-		HINTERNET session = WinHttpOpen(L"ReviveNext/1.0", WINHTTP_ACCESS_TYPE_DEFAULT_PROXY,
-			WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
-		if (!session)
-			return std::nullopt;
-
 		HINTERNET connect = WinHttpConnect(session, host.c_str(), INTERNET_DEFAULT_HTTPS_PORT, 0);
 		if (!connect)
-		{
-			WinHttpCloseHandle(session);
 			return std::nullopt;
-		}
 
 		HINTERNET request = WinHttpOpenRequest(connect, L"GET", pathAndQuery.c_str(), nullptr,
 			WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES, WINHTTP_FLAG_SECURE);
 		if (!request)
 		{
 			WinHttpCloseHandle(connect);
-			WinHttpCloseHandle(session);
 			return std::nullopt;
 		}
 
@@ -102,15 +100,30 @@ namespace
 
 		WinHttpCloseHandle(request);
 		WinHttpCloseHandle(connect);
-		WinHttpCloseHandle(session);
 		return result;
 	}
+}
+
+SteamGridDb::SteamGridDb(std::string apiKey) : m_apiKey(std::move(apiKey))
+{
+	m_session = WinHttpOpen(L"ReviveNext/1.0", WINHTTP_ACCESS_TYPE_DEFAULT_PROXY,
+		WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
+}
+
+SteamGridDb::~SteamGridDb()
+{
+	if (m_session)
+		WinHttpCloseHandle((HINTERNET)m_session);
 }
 
 std::vector<SgdbGame> SteamGridDb::SearchGames(const std::string& term)
 {
 	std::vector<SgdbGame> games;
-	auto body = HttpsGet(L"www.steamgriddb.com", L"/api/v2/search/autocomplete/" + Utf8ToWide(UrlEncode(term)), m_apiKey);
+	if (!m_session)
+		return games;
+
+	auto body = HttpsGet((HINTERNET)m_session, L"www.steamgriddb.com",
+		L"/api/v2/search/autocomplete/" + Utf8ToWide(UrlEncode(term)), m_apiKey);
 	if (!body)
 		return games;
 
@@ -131,11 +144,14 @@ std::vector<SgdbGame> SteamGridDb::SearchGames(const std::string& term)
 
 namespace
 {
-	std::vector<SgdbGrid> GetGrids(const std::string& apiKey, int64_t gameId, const wchar_t* dimensions)
+	std::vector<SgdbGrid> GetGrids(HINTERNET session, const std::string& apiKey, int64_t gameId, const wchar_t* dimensions)
 	{
 		std::vector<SgdbGrid> grids;
+		if (!session)
+			return grids;
+
 		std::wstring path = L"/api/v2/grids/game/" + std::to_wstring(gameId) + L"?dimensions=" + dimensions;
-		auto body = HttpsGet(L"www.steamgriddb.com", path, apiKey);
+		auto body = HttpsGet(session, L"www.steamgriddb.com", path, apiKey);
 		if (!body)
 			return grids;
 
@@ -167,16 +183,19 @@ namespace
 
 std::vector<SgdbGrid> SteamGridDb::GetPortraitGrids(int64_t gameId)
 {
-	return GetGrids(m_apiKey, gameId, L"600x900");
+	return GetGrids((HINTERNET)m_session, m_apiKey, gameId, L"600x900");
 }
 
 std::vector<SgdbGrid> SteamGridDb::GetWidescreenGrids(int64_t gameId)
 {
-	return GetGrids(m_apiKey, gameId, L"920x430");
+	return GetGrids((HINTERNET)m_session, m_apiKey, gameId, L"920x430");
 }
 
-std::optional<std::string> SteamGridDb::DownloadBytes(const std::string& url)
+std::optional<std::string> SteamGridDb::DownloadBytes(const std::string& url) const
 {
+	if (!m_session)
+		return std::nullopt;
+
 	URL_COMPONENTS components = { sizeof(components) };
 	wchar_t host[256] = {}, path[2048] = {};
 	components.lpszHostName = host;
@@ -188,13 +207,13 @@ std::optional<std::string> SteamGridDb::DownloadBytes(const std::string& url)
 	if (!WinHttpCrackUrl(wideUrl.c_str(), (DWORD)wideUrl.size(), 0, &components))
 		return std::nullopt;
 
-	auto body = HttpsGet(host, path, "");
+	auto body = HttpsGet((HINTERNET)m_session, host, path, "");
 	if (!body || body->empty())
 		return std::nullopt;
 	return body;
 }
 
-bool SteamGridDb::DownloadFile(const std::string& url, const std::string& destPath)
+bool SteamGridDb::DownloadFile(const std::string& url, const std::string& destPath) const
 {
 	auto body = DownloadBytes(url);
 	if (!body)
