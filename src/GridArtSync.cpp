@@ -40,18 +40,14 @@ namespace
 std::vector<MetaGame> GridArtSync::Run(const std::vector<MetaGame>& games, const std::string& injectorPath,
 	const std::string& shortcutsPath, const std::string& gridDir)
 {
+	if (games.empty())
+		return {};
+
+	// No forced prompt when a key isn't configured - the window itself has
+	// a "Settings..." button to add one whenever the user wants, and the
+	// window is useful (Library removal/review) even without art search.
 	auto apiKey = RegReadSZ(HKEY_CURRENT_USER, L"Software\\ReviveNext", L"SteamGridDbApiKey");
-	if (!apiKey)
-	{
-		printf("No SteamGridDB API key configured - asking for one.\n");
-		apiKey = ArtMatcherGui::PromptForApiKey();
-		if (!apiKey)
-		{
-			printf("No key entered - skipping Library grid art.\n");
-			return {};
-		}
-	}
 
 	auto appIds = SteamShortcuts::ReadAssignedAppIds(shortcutsPath);
-	return ArtMatcherGui::Run(games, appIds, injectorPath, shortcutsPath, gridDir, *apiKey);
+	return ArtMatcherGui::Run(games, appIds, injectorPath, shortcutsPath, gridDir, apiKey);
 }

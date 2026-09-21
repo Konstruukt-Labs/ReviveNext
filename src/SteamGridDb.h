@@ -36,6 +36,11 @@ public:
 	// uses. Empty on any failure.
 	std::vector<SgdbGrid> GetPortraitGrids(int64_t gameId);
 
+	// Widescreen (920x430) grids only - the horizontal capsule art Steam
+	// uses for the "last played"/continue-playing tile, including
+	// SteamVR Home's own dashboard view of it. Empty on any failure.
+	std::vector<SgdbGrid> GetWidescreenGrids(int64_t gameId);
+
 	// Downloads url to destPath. false on any failure; never throws.
 	static bool DownloadFile(const std::string& url, const std::string& destPath);
 

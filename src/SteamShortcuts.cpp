@@ -225,9 +225,17 @@ namespace
 		entry["icon"] = VdfNode(ResolveIcon(game));
 		entry["ShortcutPath"] = VdfNode(std::string());
 		entry["LaunchOptions"] = VdfNode(launchOptions);
-		entry["IsHidden"] = VdfNode(false);
 		entry["AllowDesktopConfig"] = VdfNode(true);
-		entry["AllowOverlay"] = VdfNode(true);
+		// Off, not the usual true: Steam's own overlay injects into the
+		// launched process the same way ReviveInjector.exe's Detours-based
+		// DLL injection does (briefly suspend, inject, resume) - two
+		// independent injectors racing to do that to the same freshly
+		// created process is a real suspect for the Steam-side stall seen
+		// after quitting a game (Steam's own process-tracking thread going
+		// completely silent, not just missing this one app's exit - see
+		// AGENTS.md-adjacent notes/commit history around this). If turning
+		// it off stops the stall, this stays off; if not, revisit.
+		entry["AllowOverlay"] = VdfNode(false);
 		entry["OpenVR"] = VdfNode(true);
 		if (!entry.Find("LastPlayTime"))
 			entry["LastPlayTime"] = VdfNode((int32_t)0);
@@ -250,7 +258,8 @@ std::optional<std::string> SteamShortcuts::FindShortcutsPath()
 	return (fs::path(*steamPath) / "userdata" / *userId / "config" / "shortcuts.vdf").string();
 }
 
-bool SteamShortcuts::Sync(const std::vector<MetaGame>& games, const std::string& injectorPath, const std::string& shortcutsPath)
+bool SteamShortcuts::Sync(const std::vector<MetaGame>& games, const std::string& injectorPath,
+	const std::string& shortcutsPath)
 {
 	VdfNode root;
 	if (auto bytes = ReadFile(shortcutsPath); !bytes.empty())

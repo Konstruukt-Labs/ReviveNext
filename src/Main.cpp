@@ -27,6 +27,55 @@ namespace
 		}
 	}
 
+	// Revive's InputManager::LoadActionManifest() (compiled into the
+	// vendored LibRevive64.dll, unchanged) normally finds its
+	// action_manifest.json via a registry key Revive's own installer
+	// writes (HKLM\Software\Revive) - since ReviveNext doesn't require
+	// Revive to be installed at all, that key may not exist, which shows
+	// up at launch as "Failed to load action manifest, input will not
+	// function correctly" (SteamVR loads, but controllers do nothing).
+	//
+	// LibRevive64.dll checks the REVIVE_ACTION_MANIFEST environment
+	// variable before ever touching the registry, so setting it here -
+	// persistently, at the user level, so it's inherited by every process
+	// tree Steam (and anything else) launches from now on, Steam included
+	// once restarted - covers this with no extra process in the launch
+	// chain. (A wrapper .exe that set this only for its own child was
+	// tried first and worked, but added a process hop that measurably
+	// changed SteamVR's dashboard behavior during the game's startup
+	// compared to a native Steam VR title, confirmed by the user
+	// side-by-side - not worth that cost for what a one-time environment
+	// variable solves just as well.)
+	//
+	// Broadcasting WM_SETTINGCHANGE only refreshes processes like Explorer
+	// that watch for it live; an already-running Steam won't see this
+	// until it's restarted, same as any other environment variable change.
+	void EnsureActionManifestEnvVar(const std::string& runtimeDir)
+	{
+		std::wstring manifestPath = std::filesystem::path(runtimeDir + "Input\\action_manifest.json").wstring();
+
+		HKEY key;
+		if (RegOpenKeyExW(HKEY_CURRENT_USER, L"Environment", 0, KEY_READ | KEY_WRITE, &key) != ERROR_SUCCESS)
+			return;
+
+		wchar_t existing[MAX_PATH] = {};
+		DWORD size = sizeof(existing);
+		DWORD type = 0;
+		LONG readResult = RegQueryValueExW(key, L"REVIVE_ACTION_MANIFEST", nullptr, &type, (LPBYTE)existing, &size);
+
+		if (readResult != ERROR_SUCCESS || type != REG_SZ || manifestPath != existing)
+		{
+			RegSetValueExW(key, L"REVIVE_ACTION_MANIFEST", 0, REG_SZ, (const BYTE*)manifestPath.c_str(),
+				(DWORD)((manifestPath.size() + 1) * sizeof(wchar_t)));
+			DWORD_PTR result;
+			SendMessageTimeoutW(HWND_BROADCAST, WM_SETTINGCHANGE, 0, (LPARAM)L"Environment",
+				SMTO_ABORTIFHUNG, 5000, &result);
+			printf("Set REVIVE_ACTION_MANIFEST - if this is new or changed, restart Steam once for it to take effect.\n");
+		}
+
+		RegCloseKey(key);
+	}
+
 	int RunMain()
 	{
 		// IconConverter uses WIC, which needs COM initialized on this thread.
@@ -60,25 +109,29 @@ namespace
 		}
 		printf("Syncing to: %s\n", shortcutsPath->c_str());
 
-		// The actual launch target is Revive's ReviveInjector.exe, bundled
-		// alongside this exe (see runtime/ and CMakeLists.txt) - it does the
-		// real Oculus SDK -> OpenVR/OpenXR translation. ReviveNext itself is
-		// never what Steam launches.
+		// The actual launch target is Revive's own ReviveInjector.exe,
+		// bundled alongside this exe (see runtime/ and CMakeLists.txt) -
+		// it does the real Oculus SDK -> OpenVR/OpenXR translation.
+		// ReviveNext itself is never what Steam launches.
 		wchar_t selfPathW[MAX_PATH];
 		GetModuleFileNameW(nullptr, selfPathW, MAX_PATH);
 		int len = WideCharToMultiByte(CP_UTF8, 0, selfPathW, -1, nullptr, 0, nullptr, nullptr);
 		std::string selfPath(len - 1, '\0');
 		WideCharToMultiByte(CP_UTF8, 0, selfPathW, -1, selfPath.data(), len, nullptr, nullptr);
 
-		std::string injectorPath = selfPath;
-		if (auto pos = injectorPath.find_last_of("\\/"); pos != std::string::npos)
-			injectorPath = injectorPath.substr(0, pos + 1) + "ReviveInjector.exe";
+		std::string selfDir = selfPath;
+		if (auto pos = selfDir.find_last_of("\\/"); pos != std::string::npos)
+			selfDir = selfDir.substr(0, pos + 1);
+
+		std::string injectorPath = selfDir + "ReviveInjector.exe";
 
 		if (!std::filesystem::exists(injectorPath))
 		{
 			fprintf(stderr, "ReviveInjector.exe not found next to ReviveNext.exe (expected: %s).\n", injectorPath.c_str());
 			return 1;
 		}
+
+		EnsureActionManifestEnvVar(selfDir);
 
 		if (!SteamShortcuts::Sync(games, injectorPath, *shortcutsPath))
 		{

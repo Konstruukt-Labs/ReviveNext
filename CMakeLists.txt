@@ -43,7 +43,18 @@ endif()
 # own job stays scoped to discovery + Steam Library sync, not reimplementing
 # the Oculus SDK -> OpenVR/OpenXR translation. These are prebuilt binaries
 # vendored under runtime/ (see runtime/README.md for how to refresh them).
-foreach(runtime_file ReviveInjector.exe LibRevive64.dll LibReviveXR64.dll openvr_api64.dll)
+# The Input/ manifest files are what Main.cpp's EnsureActionManifestEnvVar
+# points REVIVE_ACTION_MANIFEST at - vendored from Revive's own repo
+# (Revive/Input/), since Revive's installer would otherwise be what puts
+# these on disk.
+add_custom_command(TARGET ${APP_NAME} POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:${APP_NAME}>/Input"
+)
+foreach(runtime_file
+        ReviveInjector.exe LibRevive64.dll LibReviveXR64.dll openvr_api64.dll
+        Input/action_manifest.json Input/gamepad_default.json Input/holographic_controller_default.json
+        Input/knuckles_default.json Input/oculus_touch_default.json Input/vive_controller_default.json
+        Input/vive_cosmos_default.json)
     add_custom_command(TARGET ${APP_NAME} POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
             "${CMAKE_SOURCE_DIR}/runtime/${runtime_file}"

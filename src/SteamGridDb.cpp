@@ -129,37 +129,50 @@ std::vector<SgdbGame> SteamGridDb::SearchGames(const std::string& term)
 	return games;
 }
 
-std::vector<SgdbGrid> SteamGridDb::GetPortraitGrids(int64_t gameId)
+namespace
 {
-	std::vector<SgdbGrid> grids;
-	std::wstring path = L"/api/v2/grids/game/" + std::to_wstring(gameId) + L"?dimensions=600x900";
-	auto body = HttpsGet(L"www.steamgriddb.com", path, m_apiKey);
-	if (!body)
-		return grids;
-
-	try
+	std::vector<SgdbGrid> GetGrids(const std::string& apiKey, int64_t gameId, const wchar_t* dimensions)
 	{
-		json response = json::parse(*body);
-		if (!response.value("success", false) || !response.contains("data"))
+		std::vector<SgdbGrid> grids;
+		std::wstring path = L"/api/v2/grids/game/" + std::to_wstring(gameId) + L"?dimensions=" + dimensions;
+		auto body = HttpsGet(L"www.steamgriddb.com", path, apiKey);
+		if (!body)
 			return grids;
 
-		for (auto& item : response["data"])
+		try
 		{
-			SgdbGrid grid;
-			grid.id = item.value("id", (int64_t)0);
-			grid.url = item.value("url", "");
-			grid.width = item.value("width", 0);
-			grid.height = item.value("height", 0);
-			if (item.contains("author") && item["author"].is_object())
-				grid.author = item["author"].value("name", "");
-			if (!grid.url.empty())
-				grids.push_back(std::move(grid));
+			json response = json::parse(*body);
+			if (!response.value("success", false) || !response.contains("data"))
+				return grids;
+
+			for (auto& item : response["data"])
+			{
+				SgdbGrid grid;
+				grid.id = item.value("id", (int64_t)0);
+				grid.url = item.value("url", "");
+				grid.width = item.value("width", 0);
+				grid.height = item.value("height", 0);
+				if (item.contains("author") && item["author"].is_object())
+					grid.author = item["author"].value("name", "");
+				if (!grid.url.empty())
+					grids.push_back(std::move(grid));
+			}
 		}
+		catch (const json::exception&)
+		{
+		}
+		return grids;
 	}
-	catch (const json::exception&)
-	{
-	}
-	return grids;
+}
+
+std::vector<SgdbGrid> SteamGridDb::GetPortraitGrids(int64_t gameId)
+{
+	return GetGrids(m_apiKey, gameId, L"600x900");
+}
+
+std::vector<SgdbGrid> SteamGridDb::GetWidescreenGrids(int64_t gameId)
+{
+	return GetGrids(m_apiKey, gameId, L"920x430");
 }
 
 std::optional<std::string> SteamGridDb::DownloadBytes(const std::string& url)
