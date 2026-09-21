@@ -25,15 +25,17 @@ namespace fs = std::filesystem;
 
 namespace
 {
-	constexpr int kCoverX = 20, kCoverY = 50, kCoverW = 180, kCoverH = 180;
+	// A caption row ("Meta Art" / "Library cover" / "Home art") sits just
+	// above each image box.
+	constexpr int kCaptionY = 48, kCaptionH = 20;
+	constexpr int kCoverX = 20, kCoverY = 72, kCoverW = 180, kCoverH = 180;
 	// Library cover preview matches its source aspect (600x900) exactly, so
 	// it never needs letterboxing. Home art (920x430) is much wider than
 	// tall - its box is sized to roughly the same aspect so it isn't
 	// distorted either. Both are shown side by side at all times so
 	// picking one never requires switching away from the other.
-	constexpr int kPortraitX = 220, kPortraitY = 50, kPortraitW = 140, kPortraitH = 210;
-	constexpr int kHomeX = 380, kHomeY = 50, kHomeW = 460, kHomeH = 215;
-	constexpr int kLabelsX = 380;
+	constexpr int kPortraitX = 220, kPortraitY = 72, kPortraitW = 140, kPortraitH = 210;
+	constexpr int kHomeX = 380, kHomeY = 72, kHomeW = 460, kHomeH = 215;
 
 	constexpr int kThumbPortraitW = 96, kThumbPortraitH = 144;
 	constexpr int kThumbHomeW = 160, kThumbHomeH = 75;
@@ -48,7 +50,6 @@ namespace
 	constexpr int kIdBtnClose = 108;
 	constexpr int kIdBtnSettings = 109;
 	constexpr int kIdBtnPrev = 110;
-	constexpr int kIdBtnNext = 111;
 	constexpr UINT_PTR kTimerCheckSteam = 1;
 
 	enum class Mode { PickingGame, PickingGrid, WaitingForSteamClose, Done };
@@ -188,7 +189,8 @@ namespace
 		HWND labelGridsPortrait = nullptr, labelGridsHome = nullptr;
 		HWND btnBack = nullptr, btnSkip = nullptr, titleLabel = nullptr, counterLabel = nullptr, statusLabel = nullptr;
 		HWND finalLabel = nullptr, btnClose = nullptr, btnSettings = nullptr;
-		HWND btnPrev = nullptr, btnNext = nullptr;
+		HWND btnPrev = nullptr;
+		HWND captionMeta = nullptr, captionLibrary = nullptr, captionHome = nullptr;
 
 		Gdiplus::Image* coverArt = nullptr;
 		Gdiplus::Image* currentArtPortrait = nullptr; // the Library cover already saved for the game on screen, if any
@@ -350,7 +352,7 @@ namespace
 	{
 		g.mode = Mode::WaitingForSteamClose;
 		for (HWND h : { g.listboxGames, g.listviewGridsPortrait, g.listviewGridsHome, g.labelGridsPortrait,
-				g.labelGridsHome, g.btnBack, g.btnSkip, g.btnPrev, g.btnNext,
+				g.labelGridsHome, g.btnBack, g.btnSkip, g.btnPrev,
 				g.editSearch, g.btnSearch, g.titleLabel, g.counterLabel, g.btnSettings })
 			ShowWindow(h, SW_HIDE);
 
@@ -394,14 +396,6 @@ namespace
 		}
 	}
 
-	void GoToNext()
-	{
-		if (g.currentIndex + 1 < g.games.size())
-		{
-			g.currentIndex++;
-			LoadGameState();
-		}
-	}
 
 	// Recomputes both kinds' existing-art state/preview for the game on
 	// screen and refreshes the counter text + Skip button label to match,
@@ -558,7 +552,6 @@ namespace
 		const MetaGame& game = g.games[g.currentIndex];
 
 		EnableWindow(g.btnPrev, g.currentIndex > 0);
-		EnableWindow(g.btnNext, g.currentIndex + 1 < g.games.size());
 
 		delete g.coverArt;
 		g.coverArt = game.coverArtPath.empty() ? nullptr : new Gdiplus::Image(Utf8ToWide(game.coverArtPath).c_str());
@@ -625,8 +618,6 @@ namespace
 				SkipCurrent();
 			else if (LOWORD(wParam) == kIdBtnPrev && HIWORD(wParam) == BN_CLICKED)
 				GoToPrev();
-			else if (LOWORD(wParam) == kIdBtnNext && HIWORD(wParam) == BN_CLICKED)
-				GoToNext();
 			else if (LOWORD(wParam) == kIdBtnBack && HIWORD(wParam) == BN_CLICKED)
 				SwitchMode(Mode::PickingGame);
 			else if (LOWORD(wParam) == kIdBtnClose && HIWORD(wParam) == BN_CLICKED)
@@ -753,55 +744,70 @@ namespace
 		g.btnSettings = CreateWindowExW(0, L"BUTTON", L"Settings...", WS_CHILD | WS_VISIBLE,
 			760, 16, 120, 26, hwnd, (HMENU)(INT_PTR)kIdBtnSettings, nullptr, nullptr);
 
+		// Captions + cover art, Library cover preview, and Home art preview
+		// all sit in a row above (images drawn in WM_PAINT); everything
+		// else goes below it since Home art's box is too wide to also fit
+		// a label column beside it the way the single portrait preview
+		// used to.
+		g.captionMeta = CreateWindowExW(0, L"STATIC", L"Meta Art", WS_CHILD | WS_VISIBLE,
+			kCoverX, kCaptionY, kCoverW, kCaptionH, hwnd, nullptr, nullptr, nullptr);
+		g.captionLibrary = CreateWindowExW(0, L"STATIC", L"Library cover", WS_CHILD | WS_VISIBLE,
+			kPortraitX, kCaptionY, kPortraitW, kCaptionH, hwnd, nullptr, nullptr, nullptr);
+		g.captionHome = CreateWindowExW(0, L"STATIC", L"Home art", WS_CHILD | WS_VISIBLE,
+			kHomeX, kCaptionY, kHomeW, kCaptionH, hwnd, nullptr, nullptr, nullptr);
+
 		g.titleLabel = CreateWindowExW(0, L"STATIC", L"", WS_CHILD | WS_VISIBLE,
-			kLabelsX, 50, 876 - kLabelsX, 24, hwnd, nullptr, nullptr, nullptr);
+			20, 304, 860, 24, hwnd, nullptr, nullptr, nullptr);
 		g.counterLabel = CreateWindowExW(0, L"STATIC", L"", WS_CHILD | WS_VISIBLE,
-			kLabelsX, 76, 300, 20, hwnd, nullptr, nullptr, nullptr);
-		g.btnPrev = CreateWindowExW(0, L"BUTTON", L"< Prev", WS_CHILD | WS_VISIBLE,
-			kLabelsX + 306, 72, 80, 24, hwnd, (HMENU)(INT_PTR)kIdBtnPrev, nullptr, nullptr);
-		g.btnNext = CreateWindowExW(0, L"BUTTON", L"Next >", WS_CHILD | WS_VISIBLE,
-			kLabelsX + 392, 72, 80, 24, hwnd, (HMENU)(INT_PTR)kIdBtnNext, nullptr, nullptr);
+			20, 330, 600, 20, hwnd, nullptr, nullptr, nullptr);
 
 		g.editSearch = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"", WS_CHILD | WS_VISIBLE | ES_AUTOHSCROLL,
-			kLabelsX, 106, 386, 26, hwnd, (HMENU)(INT_PTR)kIdEditSearch, nullptr, nullptr);
+			20, 360, 600, 26, hwnd, (HMENU)(INT_PTR)kIdEditSearch, nullptr, nullptr);
 		g.btnSearch = CreateWindowExW(0, L"BUTTON", L"Search", WS_CHILD | WS_VISIBLE,
-			kLabelsX + 396, 106, 90, 26, hwnd, (HMENU)(INT_PTR)kIdBtnSearch, nullptr, nullptr);
+			626, 360, 90, 26, hwnd, (HMENU)(INT_PTR)kIdBtnSearch, nullptr, nullptr);
 
 		g.labelGridsPortrait = CreateWindowExW(0, L"STATIC", L"Library cover (600x900):", WS_CHILD,
-			20, 372, 410, 20, hwnd, nullptr, nullptr, nullptr);
+			20, 396, 410, 20, hwnd, nullptr, nullptr, nullptr);
 		g.labelGridsHome = CreateWindowExW(0, L"STATIC", L"Home art (920x430):", WS_CHILD,
-			450, 372, 410, 20, hwnd, nullptr, nullptr, nullptr);
+			450, 396, 410, 20, hwnd, nullptr, nullptr, nullptr);
 
 		g.listboxGames = CreateWindowExW(WS_EX_CLIENTEDGE, L"LISTBOX", L"",
 			WS_CHILD | WS_VISIBLE | WS_VSCROLL | LBS_NOTIFY,
-			20, 396, 860, 220, hwnd, (HMENU)(INT_PTR)kIdListboxGames, nullptr, nullptr);
+			20, 420, 860, 220, hwnd, (HMENU)(INT_PTR)kIdListboxGames, nullptr, nullptr);
 
 		// Side by side rather than the single listview this used to be -
 		// both kinds' candidates for the same searched game are available
 		// at once, so picking one never means losing the other's results.
 		g.listviewGridsPortrait = CreateWindowExW(WS_EX_CLIENTEDGE, WC_LISTVIEWW, L"",
 			WS_CHILD | LVS_ICON | LVS_SINGLESEL,
-			20, 396, 410, 220, hwnd, (HMENU)(INT_PTR)kIdListviewGridsPortrait, nullptr, nullptr);
+			20, 420, 410, 220, hwnd, (HMENU)(INT_PTR)kIdListviewGridsPortrait, nullptr, nullptr);
 		g.listviewGridsHome = CreateWindowExW(WS_EX_CLIENTEDGE, WC_LISTVIEWW, L"",
 			WS_CHILD | LVS_ICON | LVS_SINGLESEL,
-			450, 396, 410, 220, hwnd, (HMENU)(INT_PTR)kIdListviewGridsHome, nullptr, nullptr);
+			450, 420, 410, 220, hwnd, (HMENU)(INT_PTR)kIdListviewGridsHome, nullptr, nullptr);
 
 		g.btnBack = CreateWindowExW(0, L"BUTTON", L"< Back to search results", WS_CHILD | WS_VISIBLE,
-			20, 626, 200, 28, hwnd, (HMENU)(INT_PTR)kIdBtnBack, nullptr, nullptr);
+			20, 650, 200, 28, hwnd, (HMENU)(INT_PTR)kIdBtnBack, nullptr, nullptr);
+		// Prev lives here rather than up by the counter - the only other
+		// "move to another game" control is this row's Skip/Next button,
+		// so keeping both together reads as one pair instead of two
+		// separate, overlapping ways to advance.
+		g.btnPrev = CreateWindowExW(0, L"BUTTON", L"< Prev", WS_CHILD | WS_VISIBLE,
+			630, 650, 80, 28, hwnd, (HMENU)(INT_PTR)kIdBtnPrev, nullptr, nullptr);
 		g.btnSkip = CreateWindowExW(0, L"BUTTON", L"Skip this game", WS_CHILD | WS_VISIBLE,
-			760, 626, 120, 28, hwnd, (HMENU)(INT_PTR)kIdBtnSkip, nullptr, nullptr);
+			720, 650, 160, 28, hwnd, (HMENU)(INT_PTR)kIdBtnSkip, nullptr, nullptr);
 
 		g.statusLabel = CreateWindowExW(0, L"STATIC", L"", WS_CHILD | WS_VISIBLE,
-			20, 662, 860, 24, hwnd, nullptr, nullptr, nullptr);
+			20, 686, 860, 24, hwnd, nullptr, nullptr, nullptr);
 
 		g.finalLabel = CreateWindowExW(0, L"STATIC", L"", WS_CHILD,
-			20, 396, 860, 220, hwnd, nullptr, nullptr, nullptr);
+			20, 420, 860, 220, hwnd, nullptr, nullptr, nullptr);
 		g.btnClose = CreateWindowExW(0, L"BUTTON", L"Close", WS_CHILD,
-			760, 626, 120, 28, hwnd, (HMENU)(INT_PTR)kIdBtnClose, nullptr, nullptr);
+			720, 650, 160, 28, hwnd, (HMENU)(INT_PTR)kIdBtnClose, nullptr, nullptr);
 
-		for (HWND h : { g.titleLabel, g.counterLabel, g.editSearch, g.btnSearch, g.listboxGames,
+		for (HWND h : { g.captionMeta, g.captionLibrary, g.captionHome, g.titleLabel, g.counterLabel,
+				g.editSearch, g.btnSearch, g.listboxGames,
 				g.listviewGridsPortrait, g.listviewGridsHome, g.labelGridsPortrait, g.labelGridsHome,
-				g.btnBack, g.btnSkip, g.btnPrev, g.btnNext,
+				g.btnBack, g.btnSkip, g.btnPrev,
 				g.statusLabel, g.finalLabel, g.btnClose, g.btnSettings })
 			setFont(h);
 	}
@@ -856,7 +862,7 @@ std::vector<MetaGame> ArtMatcherGui::Run(const std::vector<MetaGame>& allGames,
 
 	g.hwnd = CreateWindowExW(0, wc.lpszClassName, L"ReviveNext - Manage Library",
 		WS_OVERLAPPEDWINDOW & ~WS_THICKFRAME & ~WS_MAXIMIZEBOX,
-		CW_USEDEFAULT, CW_USEDEFAULT, 900, 760, nullptr, nullptr, wc.hInstance, nullptr);
+		CW_USEDEFAULT, CW_USEDEFAULT, 900, 780, nullptr, nullptr, wc.hInstance, nullptr);
 
 	CreateControls(g.hwnd);
 	ShowWindow(g.hwnd, SW_SHOW);
