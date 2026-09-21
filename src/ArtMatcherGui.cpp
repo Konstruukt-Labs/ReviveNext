@@ -396,7 +396,6 @@ namespace
 		}
 	}
 
-
 	// Recomputes both kinds' existing-art state/preview for the game on
 	// screen and refreshes the counter text + Skip button label to match,
 	// without touching search results, mode, or navigation - called both
@@ -461,6 +460,18 @@ namespace
 		std::string ext = fs::path(results[idx].url).extension().string();
 		if (ext.empty())
 			ext = ".png";
+
+		// Release the previously-loaded preview for this stem, if any,
+		// before touching its file on disk - Gdiplus::Image keeps its
+		// source file open for as long as the Image object lives, which
+		// would otherwise block deleting/overwriting it below (silently:
+		// ClearExisting swallows the failure, and even if the download
+		// itself still succeeds, this same Image object - not yet
+		// reloaded - is what the preview keeps showing until
+		// RefreshArtStatus() replaces it further down).
+		Gdiplus::Image*& target = kind == ArtKind::Portrait ? g.currentArtPortrait : g.currentArtHome;
+		delete target;
+		target = nullptr;
 
 		// Overwrite whatever was here before (previously-matched art under
 		// a different extension, or a skip marker) rather than leaving it
