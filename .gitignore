@@ -1,5 +1,17 @@
 /build/
 
+# Third-party SDKs the license doesn't allow redistributing - download and
+# place locally, see revive/BUILDING.md.
+/revive/Externals/LibOVR/
+/revive/Externals/openxr/
+
+# qmake/MSBuild local build output - see revive/BUILDING.md.
+/revive/Release/
+/revive/Debug/
+/revive/x64/
+/revive/x86/
+/revive/.vs/
+
 # Agent instructions for working in this repo - deliberately untracked,
 # each machine keeps its own copy.
 AGENTS.md

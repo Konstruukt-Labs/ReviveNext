@@ -39,25 +39,65 @@ if (MSVC)
 endif()
 
 # Actual game launching reuses Revive's proven ReviveInjector.exe (and the
-# LibRevive64/LibReviveXR64/openvr_api64 it loads) unchanged - ReviveNext's
-# own job stays scoped to discovery + Steam Library sync, not reimplementing
-# the Oculus SDK -> OpenVR/OpenXR translation. These are prebuilt binaries
-# vendored under runtime/ (see runtime/README.md for how to refresh them).
-# The Input/ manifest files are what Main.cpp's EnsureActionManifestEnvVar
-# points REVIVE_ACTION_MANIFEST at - vendored from Revive's own repo
-# (Revive/Input/), since Revive's installer would otherwise be what puts
-# these on disk.
+# LibRevive64/LibReviveXR64/openvr_api64 it loads) - ReviveNext's own job
+# stays scoped to discovery + Steam Library sync, not reimplementing the
+# Oculus SDK -> OpenVR/OpenXR translation. The source lives in revive/
+# (originally LibreVR/Revive, now maintained here - see revive/BUILDING.md
+# for its two local-only dependencies) and is still built via its own
+# Visual Studio solution, proven and not worth hand-porting to CMake and
+# risking subtly wrong compiler/linker settings for this VR-runtime-
+# critical shim code - located via vswhere and invoked here so `cmake
+# --build` alone still produces a complete ReviveNext install.
+find_program(VSWHERE_EXE vswhere
+    PATHS "C:/Program Files (x86)/Microsoft Visual Studio/Installer"
+)
+if (NOT VSWHERE_EXE)
+    message(FATAL_ERROR "vswhere.exe not found - is Visual Studio installed?")
+endif()
+
+execute_process(
+    COMMAND "${VSWHERE_EXE}" -latest -requires Microsoft.Component.MSBuild -find "MSBuild/**/Bin/MSBuild.exe"
+    OUTPUT_VARIABLE MSBUILD_EXE
+    OUTPUT_STRIP_TRAILING_WHITESPACE
+)
+if (NOT MSBUILD_EXE)
+    message(FATAL_ERROR "MSBuild.exe not found via vswhere - is the \"MSBuild\" Visual Studio component installed?")
+endif()
+
+set(REVIVE_DIR "${CMAKE_SOURCE_DIR}/revive")
+set(REVIVE_OUT_DIR "${REVIVE_DIR}/Release")
+
+add_custom_target(revive_binaries
+    # Built through Revive.sln, not the .vcxproj directly - $(SolutionDir)
+    # (used throughout these projects' Externals include paths) only
+    # resolves correctly to revive/ itself when MSBuild has an actual
+    # solution context; building a lone .vcxproj instead makes it resolve
+    # per-project to that project's own directory, breaking every
+    # $(Externals) reference.
+    COMMAND "${MSBUILD_EXE}" "${REVIVE_DIR}/Revive.sln" /t:ReviveInjector /p:Configuration=Release /p:Platform=x64 /m
+    WORKING_DIRECTORY "${REVIVE_DIR}"
+    COMMENT "Building ReviveInjector.exe/LibRevive64.dll/LibReviveXR64.dll/openvr_api64.dll from revive/ (see revive/BUILDING.md if this fails to find LibOVR/openxr)"
+    VERBATIM
+)
+add_dependencies(${APP_NAME} revive_binaries)
+
 add_custom_command(TARGET ${APP_NAME} POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:${APP_NAME}>/Input"
 )
-foreach(runtime_file
-        ReviveInjector.exe LibRevive64.dll LibReviveXR64.dll openvr_api64.dll
-        Input/action_manifest.json Input/gamepad_default.json Input/holographic_controller_default.json
-        Input/knuckles_default.json Input/oculus_touch_default.json Input/vive_controller_default.json
-        Input/vive_cosmos_default.json)
+foreach(revive_binary ReviveInjector.exe LibRevive64.dll LibReviveXR64.dll openvr_api64.dll)
     add_custom_command(TARGET ${APP_NAME} POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
-            "${CMAKE_SOURCE_DIR}/runtime/${runtime_file}"
-            "$<TARGET_FILE_DIR:${APP_NAME}>/${runtime_file}"
+            "${REVIVE_OUT_DIR}/${revive_binary}"
+            "$<TARGET_FILE_DIR:${APP_NAME}>/${revive_binary}"
+    )
+endforeach()
+foreach(input_file
+        action_manifest.json gamepad_default.json holographic_controller_default.json
+        knuckles_default.json oculus_touch_default.json vive_controller_default.json
+        vive_cosmos_default.json)
+    add_custom_command(TARGET ${APP_NAME} POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${REVIVE_DIR}/Revive/Input/${input_file}"
+            "$<TARGET_FILE_DIR:${APP_NAME}>/Input/${input_file}"
     )
 endforeach()
