@@ -26,32 +26,36 @@ namespace fs = std::filesystem;
 namespace
 {
 	constexpr int kCoverX = 20, kCoverY = 50, kCoverW = 180, kCoverH = 180;
-	constexpr int kCurrentArtX = 220, kCurrentArtY = 50, kCurrentArtW = 140, kCurrentArtH = 210;
+	// Library cover preview matches its source aspect (600x900) exactly, so
+	// it never needs letterboxing. Home art (920x430) is much wider than
+	// tall - its box is sized to roughly the same aspect so it isn't
+	// distorted either. Both are shown side by side at all times so
+	// picking one never requires switching away from the other.
+	constexpr int kPortraitX = 220, kPortraitY = 50, kPortraitW = 140, kPortraitH = 210;
+	constexpr int kHomeX = 380, kHomeY = 50, kHomeW = 460, kHomeH = 215;
 	constexpr int kLabelsX = 380;
-	// Portrait (Library cover) candidate thumbnails; widescreen (Home art)
-	// candidates use a different box shape (see kThumbHomeW/H) to keep
-	// their very different aspect ratio from looking squashed.
+
 	constexpr int kThumbPortraitW = 96, kThumbPortraitH = 144;
 	constexpr int kThumbHomeW = 160, kThumbHomeH = 75;
 
 	constexpr int kIdEditSearch = 101;
 	constexpr int kIdBtnSearch = 102;
 	constexpr int kIdListboxGames = 103;
-	constexpr int kIdListviewGrids = 104;
-	constexpr int kIdBtnBack = 105;
-	constexpr int kIdBtnSkip = 106;
-	constexpr int kIdBtnClose = 107;
-	constexpr int kIdBtnSettings = 108;
-	constexpr int kIdBtnArtKind = 109;
+	constexpr int kIdListviewGridsPortrait = 104;
+	constexpr int kIdListviewGridsHome = 105;
+	constexpr int kIdBtnBack = 106;
+	constexpr int kIdBtnSkip = 107;
+	constexpr int kIdBtnClose = 108;
+	constexpr int kIdBtnSettings = 109;
 	constexpr int kIdBtnPrev = 110;
 	constexpr int kIdBtnNext = 111;
 	constexpr UINT_PTR kTimerCheckSteam = 1;
 
 	enum class Mode { PickingGame, PickingGrid, WaitingForSteamClose, Done };
 
-	// Which of the two Steam-recognized art shapes is currently being
-	// matched - see SteamGridDb::GetPortraitGrids/GetWidescreenGrids and
-	// ComputeStem for what each one is keyed and searched by.
+	// The two Steam-recognized art shapes, both matched and shown at once -
+	// see SteamGridDb::GetPortraitGrids/GetWidescreenGrids and ComputeStem
+	// for what each one is keyed and searched by.
 	enum class ArtKind { Portrait, Home };
 
 	bool IsProcessRunning(const wchar_t* exeName)
@@ -179,14 +183,17 @@ namespace
 	struct State
 	{
 		HWND hwnd = nullptr;
-		HWND editSearch = nullptr, btnSearch = nullptr, listboxGames = nullptr, listviewGrids = nullptr;
+		HWND editSearch = nullptr, btnSearch = nullptr, listboxGames = nullptr;
+		HWND listviewGridsPortrait = nullptr, listviewGridsHome = nullptr;
+		HWND labelGridsPortrait = nullptr, labelGridsHome = nullptr;
 		HWND btnBack = nullptr, btnSkip = nullptr, titleLabel = nullptr, counterLabel = nullptr, statusLabel = nullptr;
 		HWND finalLabel = nullptr, btnClose = nullptr, btnSettings = nullptr;
-		HWND btnPrev = nullptr, btnNext = nullptr, btnArtKind = nullptr;
+		HWND btnPrev = nullptr, btnNext = nullptr;
 
 		Gdiplus::Image* coverArt = nullptr;
-		Gdiplus::Image* currentArt = nullptr; // the art file already saved for the game on screen, if any
-		HIMAGELIST imageList = nullptr;
+		Gdiplus::Image* currentArtPortrait = nullptr; // the Library cover already saved for the game on screen, if any
+		Gdiplus::Image* currentArtHome = nullptr; // the Home art already saved for the game on screen, if any
+		HIMAGELIST imageListPortrait = nullptr, imageListHome = nullptr;
 
 		std::vector<MetaGame> games;
 		std::vector<MetaGame> allGames; // full original list, needed for the final re-sync
@@ -196,10 +203,10 @@ namespace
 		SteamGridDb* client = nullptr; // null when no API key is configured - search is unavailable, not the whole window
 
 		std::vector<SgdbGame> gameResults;
-		std::vector<SgdbGrid> gridResults;
+		std::vector<SgdbGrid> gridResultsPortrait, gridResultsHome;
 		std::string pickedGameName; // SteamGridDB's title for the game currently shown in the grid picker
 		Mode mode = Mode::PickingGame;
-		ArtKind artKind = ArtKind::Portrait; // which shape is currently being matched/reviewed
+		ExistingState existingPortrait = ExistingState::None, existingHome = ExistingState::None;
 
 		std::vector<MetaGame> matchedGames; // returned to the caller when the window closes
 		bool hasPendingChanges = false; // matched art this session - needs the Steam-closed resync to apply titles
@@ -216,7 +223,8 @@ namespace
 		g.mode = mode;
 		bool pickingGame = (mode == Mode::PickingGame);
 		ShowWindow(g.listboxGames, pickingGame ? SW_SHOW : SW_HIDE);
-		ShowWindow(g.listviewGrids, pickingGame ? SW_HIDE : SW_SHOW);
+		for (HWND h : { g.listviewGridsPortrait, g.listviewGridsHome, g.labelGridsPortrait, g.labelGridsHome })
+			ShowWindow(h, pickingGame ? SW_HIDE : SW_SHOW);
 		ShowWindow(g.btnBack, pickingGame ? SW_HIDE : SW_SHOW);
 	}
 
@@ -247,55 +255,70 @@ namespace
 		SetStatus(g.gameResults.empty() ? L"No matches - try a different search term." : L"Double-click a game to see its grid art.");
 	}
 
+	// Fetches and fills one kind's listview - shared by ShowGridsForGame so
+	// both kinds populate together in a single "pick a game" step, rather
+	// than needing to be searched one at a time.
+	void PopulateGridList(ArtKind kind, int64_t gameId)
+	{
+		bool portrait = kind == ArtKind::Portrait;
+		HWND listview = portrait ? g.listviewGridsPortrait : g.listviewGridsHome;
+		HIMAGELIST& imageList = portrait ? g.imageListPortrait : g.imageListHome;
+		std::vector<SgdbGrid>& results = portrait ? g.gridResultsPortrait : g.gridResultsHome;
+		int thumbW = portrait ? kThumbPortraitW : kThumbHomeW;
+		int thumbH = portrait ? kThumbPortraitH : kThumbHomeH;
+
+		results = portrait ? g.client->GetPortraitGrids(gameId) : g.client->GetWidescreenGrids(gameId);
+		if (results.size() > 24)
+			results.resize(24);
+
+		if (imageList)
+		{
+			ImageList_Destroy(imageList);
+			imageList = nullptr;
+		}
+		imageList = ImageList_Create(thumbW, thumbH, ILC_COLOR32, 0, (int)results.size() + 1);
+		ListView_SetImageList(listview, imageList, LVSIL_NORMAL);
+		ListView_SetIconSpacing(listview, thumbW + 16, thumbH + 24);
+		ListView_DeleteAllItems(listview);
+
+		for (size_t i = 0; i < results.size(); ++i)
+		{
+			HBITMAP hbmp = DownloadAndScaleThumbnail(results[i].url, thumbW, thumbH);
+			int imageIndex = -1;
+			if (hbmp)
+			{
+				imageIndex = ImageList_Add(imageList, hbmp, nullptr);
+				DeleteObject(hbmp);
+			}
+
+			std::wstring label = std::to_wstring(results[i].width) + L"x" + std::to_wstring(results[i].height);
+			LVITEMW item = {};
+			item.mask = LVIF_TEXT | LVIF_IMAGE;
+			item.iItem = (int)i;
+			item.pszText = label.data();
+			item.iImage = imageIndex;
+			ListView_InsertItem(listview, &item);
+		}
+	}
+
 	void ShowGridsForGame(int idx)
 	{
 		if (idx < 0 || (size_t)idx >= g.gameResults.size())
 			return;
 
 		g.pickedGameName = g.gameResults[idx].name;
-		bool portrait = g.artKind == ArtKind::Portrait;
-		int thumbW = portrait ? kThumbPortraitW : kThumbHomeW;
-		int thumbH = portrait ? kThumbPortraitH : kThumbHomeH;
+		int64_t gameId = g.gameResults[idx].id;
 
 		SetStatus(L"Loading grid art...");
 		SetCursor(LoadCursor(nullptr, IDC_WAIT));
-		g.gridResults = portrait ? g.client->GetPortraitGrids(g.gameResults[idx].id)
-								  : g.client->GetWidescreenGrids(g.gameResults[idx].id);
-		if (g.gridResults.size() > 24)
-			g.gridResults.resize(24);
-
-		if (g.imageList)
-		{
-			ImageList_Destroy(g.imageList);
-			g.imageList = nullptr;
-		}
-		g.imageList = ImageList_Create(thumbW, thumbH, ILC_COLOR32, 0, (int)g.gridResults.size() + 1);
-		ListView_SetImageList(g.listviewGrids, g.imageList, LVSIL_NORMAL);
-		ListView_SetIconSpacing(g.listviewGrids, thumbW + 16, thumbH + 24);
-		ListView_DeleteAllItems(g.listviewGrids);
-
-		for (size_t i = 0; i < g.gridResults.size(); ++i)
-		{
-			HBITMAP hbmp = DownloadAndScaleThumbnail(g.gridResults[i].url, thumbW, thumbH);
-			int imageIndex = -1;
-			if (hbmp)
-			{
-				imageIndex = ImageList_Add(g.imageList, hbmp, nullptr);
-				DeleteObject(hbmp);
-			}
-
-			std::wstring label = std::to_wstring(g.gridResults[i].width) + L"x" + std::to_wstring(g.gridResults[i].height);
-			LVITEMW item = {};
-			item.mask = LVIF_TEXT | LVIF_IMAGE;
-			item.iItem = (int)i;
-			item.pszText = label.data();
-			item.iImage = imageIndex;
-			ListView_InsertItem(g.listviewGrids, &item);
-		}
+		PopulateGridList(ArtKind::Portrait, gameId);
+		PopulateGridList(ArtKind::Home, gameId);
 		SetCursor(LoadCursor(nullptr, IDC_ARROW));
 
 		SwitchMode(Mode::PickingGrid);
-		SetStatus(g.gridResults.empty() ? L"No portrait grid art submitted for that game yet." : L"Double-click one to use it.");
+		SetStatus(g.gridResultsPortrait.empty() && g.gridResultsHome.empty()
+			? L"No grid art submitted for that game yet."
+			: L"Double-click a Library cover or Home art thumbnail to use it - pick either or both.");
 	}
 
 	void LoadGameState();
@@ -326,8 +349,9 @@ namespace
 	void EnterWaitingState()
 	{
 		g.mode = Mode::WaitingForSteamClose;
-		for (HWND h : { g.listboxGames, g.listviewGrids, g.btnBack, g.btnSkip, g.btnPrev, g.btnNext,
-				g.editSearch, g.btnSearch, g.titleLabel, g.counterLabel, g.btnSettings, g.btnArtKind })
+		for (HWND h : { g.listboxGames, g.listviewGridsPortrait, g.listviewGridsHome, g.labelGridsPortrait,
+				g.labelGridsHome, g.btnBack, g.btnSkip, g.btnPrev, g.btnNext,
+				g.editSearch, g.btnSearch, g.titleLabel, g.counterLabel, g.btnSettings })
 			ShowWindow(h, SW_HIDE);
 
 		std::wstring msg =
@@ -379,17 +403,68 @@ namespace
 		}
 	}
 
-	void ChooseGrid(int idx)
+	// Recomputes both kinds' existing-art state/preview for the game on
+	// screen and refreshes the counter text + Skip button label to match,
+	// without touching search results, mode, or navigation - called both
+	// from LoadGameState and right after a pick, since a pick no longer
+	// advances to the next game (the user may still want to pick the
+	// other kind for the same game).
+	void RefreshArtStatus()
 	{
-		if (idx < 0 || (size_t)idx >= g.gridResults.size())
+		const MetaGame& game = g.games[g.currentIndex];
+		auto appIdIt = g.appIds.find(game.canonicalName);
+		bool hasAppId = appIdIt != g.appIds.end();
+
+		delete g.currentArtPortrait;
+		g.currentArtPortrait = nullptr;
+		delete g.currentArtHome;
+		g.currentArtHome = nullptr;
+		g.existingPortrait = ExistingState::None;
+		g.existingHome = ExistingState::None;
+
+		if (hasAppId)
+		{
+			std::string stemP = ComputeStem(appIdIt->second, g.gridDir, ArtKind::Portrait);
+			g.existingPortrait = GetExistingState(stemP);
+			if (auto f = FindExistingArtFile(stemP))
+				g.currentArtPortrait = new Gdiplus::Image(Utf8ToWide(*f).c_str());
+
+			std::string stemH = ComputeStem(appIdIt->second, g.gridDir, ArtKind::Home);
+			g.existingHome = GetExistingState(stemH);
+			if (auto f = FindExistingArtFile(stemH))
+				g.currentArtHome = new Gdiplus::Image(Utf8ToWide(*f).c_str());
+		}
+
+		auto describe = [](const wchar_t* name, ExistingState s)
+		{
+			const wchar_t* state = s == ExistingState::Matched ? L"set" : s == ExistingState::Skipped ? L"skipped" : L"not set";
+			return std::wstring(name) + L" " + state;
+		};
+		std::wstring counter = std::to_wstring(g.currentIndex + 1) + L" / " + std::to_wstring(g.games.size()) +
+			L" - " + describe(L"Library cover:", g.existingPortrait) + L", " + describe(L"Home art:", g.existingHome);
+		SetWindowTextW(g.counterLabel, counter.c_str());
+
+		// The button never destroys existing art - its label just reflects
+		// that clicking past a game with at least one kind already handled
+		// is always safe.
+		bool eitherHandled = g.existingPortrait != ExistingState::None || g.existingHome != ExistingState::None;
+		SetWindowTextW(g.btnSkip, eitherHandled ? L"Next (keep existing)" : L"Skip this game");
+
+		InvalidateRect(g.hwnd, nullptr, TRUE);
+	}
+
+	void ChooseGrid(ArtKind kind, int idx)
+	{
+		std::vector<SgdbGrid>& results = kind == ArtKind::Portrait ? g.gridResultsPortrait : g.gridResultsHome;
+		if (idx < 0 || (size_t)idx >= results.size())
 			return;
 
 		MetaGame& game = g.games[g.currentIndex];
 		auto appIdIt = g.appIds.find(game.canonicalName);
 		if (appIdIt == g.appIds.end())
 			return; // shouldn't be reachable - the picker UI is hidden without an appid
-		std::string stem = ComputeStem(appIdIt->second, g.gridDir, g.artKind);
-		std::string ext = fs::path(g.gridResults[idx].url).extension().string();
+		std::string stem = ComputeStem(appIdIt->second, g.gridDir, kind);
+		std::string ext = fs::path(results[idx].url).extension().string();
 		if (ext.empty())
 			ext = ".png";
 
@@ -399,7 +474,7 @@ namespace
 		ClearExisting(stem);
 
 		SetCursor(LoadCursor(nullptr, IDC_WAIT));
-		bool ok = SteamGridDb::DownloadFile(g.gridResults[idx].url, stem + ext);
+		bool ok = SteamGridDb::DownloadFile(results[idx].url, stem + ext);
 		SetCursor(LoadCursor(nullptr, IDC_ARROW));
 
 		if (ok)
@@ -418,7 +493,10 @@ namespace
 			}
 			g.matchedGames.push_back(game);
 			g.hasPendingChanges = true;
-			AdvanceToNext();
+			// Stays on this game and in the grid picker (rather than
+			// advancing) so picking the other kind for the same game -
+			// the common case - never needs a second search.
+			RefreshArtStatus();
 		}
 		else
 		{
@@ -429,18 +507,21 @@ namespace
 	void SkipCurrent()
 	{
 		// Only actually marks-as-skipped (and only ever touches a file)
-		// when nothing is there yet, and only when there's an appid to key
-		// it under. Picking a NEW grid (ChooseGrid) is the only action
-		// that overwrites existing art/skip state - this button must
-		// never destroy a previous pick just by clicking past an
-		// already-matched game to browse the rest.
+		// when nothing is there yet for that kind, and only when there's
+		// an appid to key it under. Picking a NEW grid (ChooseGrid) is the
+		// only action that overwrites existing art/skip state - this
+		// button must never destroy a previous pick just by clicking past
+		// an already-matched game to browse the rest.
 		auto appIdIt = g.appIds.find(g.games[g.currentIndex].canonicalName);
 		if (appIdIt != g.appIds.end())
 		{
-			std::string stem = ComputeStem(appIdIt->second, g.gridDir, g.artKind);
-			if (GetExistingState(stem) == ExistingState::None)
+			for (ArtKind kind : { ArtKind::Portrait, ArtKind::Home })
 			{
-				std::ofstream marker(stem + ".skip");
+				std::string stem = ComputeStem(appIdIt->second, g.gridDir, kind);
+				if (GetExistingState(stem) == ExistingState::None)
+				{
+					std::ofstream marker(stem + ".skip");
+				}
 			}
 		}
 		AdvanceToNext();
@@ -500,44 +581,18 @@ namespace
 				g.appIds[game.canonicalName] = it->second;
 		}
 
-		auto appIdIt = g.appIds.find(game.canonicalName);
-		bool hasAppId = appIdIt != g.appIds.end();
+		bool hasAppId = g.appIds.count(game.canonicalName) != 0;
 		bool canMatchArt = hasAppId && g.client != nullptr;
 
-		ExistingState existing = ExistingState::None;
-		std::string stem;
-		if (hasAppId)
-		{
-			stem = ComputeStem(appIdIt->second, g.gridDir, g.artKind);
-			existing = GetExistingState(stem);
-		}
-
-		delete g.currentArt;
-		g.currentArt = nullptr;
-		if (hasAppId)
-			if (auto existingFile = FindExistingArtFile(stem))
-				g.currentArt = new Gdiplus::Image(Utf8ToWide(*existingFile).c_str());
-
-		const wchar_t* kindName = g.artKind == ArtKind::Portrait ? L"Library cover" : L"Home art";
-		std::wstring counterExtra;
-		if (existing == ExistingState::Matched)
-			counterExtra += std::wstring(L" - ") + kindName + L" already set (picking a new one replaces it)";
-		else if (existing == ExistingState::Skipped)
-			counterExtra += std::wstring(L" - ") + kindName + L" previously skipped";
-		std::wstring counter = std::to_wstring(g.currentIndex + 1) + L" / " + std::to_wstring(g.games.size()) + counterExtra;
-		SetWindowTextW(g.counterLabel, counter.c_str());
-
-		SetWindowTextW(g.btnArtKind, g.artKind == ArtKind::Portrait
-			? L"Matching: Library cover (switch to Home art)"
-			: L"Matching: Home art (switch to Library cover)");
+		RefreshArtStatus();
 
 		// Art matching needs both an API key (to search) and a
-		// Steam-assigned appid (to know what file to save to) - hide the
+		// Steam-assigned appid (to know what files to save to) - hide the
 		// whole search/pick flow and explain why when either is missing,
 		// rather than leaving nonfunctional controls visible.
-		for (HWND h : { g.editSearch, g.btnSearch, g.listboxGames, g.listviewGrids, g.btnBack, g.btnArtKind })
+		for (HWND h : { g.editSearch, g.btnSearch, g.listboxGames, g.listviewGridsPortrait, g.listviewGridsHome,
+				g.labelGridsPortrait, g.labelGridsHome, g.btnBack })
 			ShowWindow(h, SW_HIDE);
-		ShowWindow(g.btnArtKind, hasAppId ? SW_SHOW : SW_HIDE);
 		if (canMatchArt)
 		{
 			for (HWND h : { g.editSearch, g.btnSearch })
@@ -552,25 +607,11 @@ namespace
 				: L"Set a SteamGridDB API key (Settings...) to enable Library art matching.");
 		}
 
-		// The button never destroys existing art (see SkipCurrent) - its
-		// label reflects that so it's clear clicking past an already-
-		// handled game is always safe.
-		SetWindowTextW(g.btnSkip, existing == ExistingState::None ? L"Skip this game" : L"Next (keep existing)");
 		SetWindowTextW(g.editSearch, Utf8ToWide(game.title).c_str());
 
 		InvalidateRect(g.hwnd, nullptr, TRUE);
 		if (canMatchArt)
 			DoSearch();
-	}
-
-	// Switches which of the two art shapes (Library cover vs. Home art)
-	// is being matched for the game on screen, then refreshes so the
-	// status text, current-art preview, and search results all reflect
-	// the newly selected kind.
-	void ToggleArtKind()
-	{
-		g.artKind = g.artKind == ArtKind::Portrait ? ArtKind::Home : ArtKind::Portrait;
-		LoadGameState();
 	}
 
 	LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
@@ -582,8 +623,6 @@ namespace
 				DoSearch();
 			else if (LOWORD(wParam) == kIdBtnSkip && HIWORD(wParam) == BN_CLICKED)
 				SkipCurrent();
-			else if (LOWORD(wParam) == kIdBtnArtKind && HIWORD(wParam) == BN_CLICKED)
-				ToggleArtKind();
 			else if (LOWORD(wParam) == kIdBtnPrev && HIWORD(wParam) == BN_CLICKED)
 				GoToPrev();
 			else if (LOWORD(wParam) == kIdBtnNext && HIWORD(wParam) == BN_CLICKED)
@@ -628,11 +667,11 @@ namespace
 		case WM_NOTIFY:
 		{
 			LPNMHDR hdr = (LPNMHDR)lParam;
-			if (hdr->idFrom == kIdListviewGrids && hdr->code == NM_DBLCLK)
+			if (hdr->code == NM_DBLCLK && (hdr->idFrom == kIdListviewGridsPortrait || hdr->idFrom == kIdListviewGridsHome))
 			{
 				auto* activate = (LPNMITEMACTIVATE)lParam;
 				if (activate->iItem >= 0)
-					ChooseGrid(activate->iItem);
+					ChooseGrid(hdr->idFrom == kIdListviewGridsPortrait ? ArtKind::Portrait : ArtKind::Home, activate->iItem);
 			}
 			return 0;
 		}
@@ -642,6 +681,35 @@ namespace
 			PAINTSTRUCT ps;
 			HDC hdc = BeginPaint(hwnd, &ps);
 			Gdiplus::Graphics gr(hdc);
+
+			// Contain-fit rather than stretch: Library cover (600x900) and
+			// Home art (920x430) have very different aspect ratios, so a
+			// fixed box for each would either distort the image or (since
+			// both are shown at once, unlike a single toggled preview)
+			// need a different box per kind anyway - this fits either
+			// cleanly into whatever box it's given, letterboxed if needed.
+			auto drawContain = [&](Gdiplus::Image* img, int x, int y, int w, int h, const wchar_t* placeholder)
+			{
+				Gdiplus::SolidBrush bg(Gdiplus::Color(255, 240, 240, 240));
+				gr.FillRectangle(&bg, x, y, w, h);
+				if (img && img->GetLastStatus() == Gdiplus::Ok)
+				{
+					double imgW = img->GetWidth(), imgH = img->GetHeight();
+					double scaleW = (double)w / imgW, scaleH = (double)h / imgH;
+					double scale = scaleW < scaleH ? scaleW : scaleH; // windows.h's min macro shadows std::min here
+					int drawW = (int)(imgW * scale), drawH = (int)(imgH * scale);
+					int drawX = x + (w - drawW) / 2, drawY = y + (h - drawH) / 2;
+					gr.DrawImage(img, drawX, drawY, drawW, drawH);
+				}
+				else
+				{
+					Gdiplus::Font font(L"Segoe UI", 9);
+					Gdiplus::SolidBrush textBrush(Gdiplus::Color(255, 120, 120, 120));
+					Gdiplus::RectF rect((Gdiplus::REAL)x + 8, (Gdiplus::REAL)y + 8, (Gdiplus::REAL)w - 16, (Gdiplus::REAL)h - 16);
+					gr.DrawString(placeholder, -1, &font, rect, nullptr, &textBrush);
+				}
+			};
+
 			if (g.coverArt && g.coverArt->GetLastStatus() == Gdiplus::Ok)
 				gr.DrawImage(g.coverArt, kCoverX, kCoverY, kCoverW, kCoverH);
 			else
@@ -650,34 +718,9 @@ namespace
 				gr.FillRectangle(&brush, kCoverX, kCoverY, kCoverW, kCoverH);
 			}
 
-			Gdiplus::SolidBrush currentArtBg(Gdiplus::Color(255, 240, 240, 240));
-			gr.FillRectangle(&currentArtBg, kCurrentArtX, kCurrentArtY, kCurrentArtW, kCurrentArtH);
-			if (g.currentArt && g.currentArt->GetLastStatus() == Gdiplus::Ok)
-			{
-				// Contain-fit rather than stretch: Library covers (600x900)
-				// and Home art (920x430) have very different aspect ratios,
-				// and this same box is reused for both depending on
-				// g.artKind - stretching either into a fixed 140x210 box
-				// would visibly distort it.
-				double imgW = g.currentArt->GetWidth(), imgH = g.currentArt->GetHeight();
-				double scaleW = kCurrentArtW / imgW, scaleH = kCurrentArtH / imgH;
-				double scale = scaleW < scaleH ? scaleW : scaleH; // windows.h's min macro shadows std::min here
-				int drawW = (int)(imgW * scale), drawH = (int)(imgH * scale);
-				int drawX = kCurrentArtX + (kCurrentArtW - drawW) / 2;
-				int drawY = kCurrentArtY + (kCurrentArtH - drawH) / 2;
-				gr.DrawImage(g.currentArt, drawX, drawY, drawW, drawH);
-			}
-			else
-			{
-				Gdiplus::Font font(L"Segoe UI", 9);
-				Gdiplus::SolidBrush textBrush(Gdiplus::Color(255, 120, 120, 120));
-				Gdiplus::RectF rect((Gdiplus::REAL)kCurrentArtX + 8, (Gdiplus::REAL)kCurrentArtY + 8,
-					(Gdiplus::REAL)kCurrentArtW - 16, (Gdiplus::REAL)kCurrentArtH - 16);
-				const wchar_t* text = g.artKind == ArtKind::Portrait
-					? L"No Library art\nselected yet"
-					: L"No Home art\nselected yet";
-				gr.DrawString(text, -1, &font, rect, nullptr, &textBrush);
-			}
+			drawContain(g.currentArtPortrait, kPortraitX, kPortraitY, kPortraitW, kPortraitH, L"No Library\ncover yet");
+			drawContain(g.currentArtHome, kHomeX, kHomeY, kHomeW, kHomeH, L"No Home art yet");
+
 			EndPaint(hwnd, &ps);
 			return 0;
 		}
@@ -723,33 +766,43 @@ namespace
 			kLabelsX, 106, 386, 26, hwnd, (HMENU)(INT_PTR)kIdEditSearch, nullptr, nullptr);
 		g.btnSearch = CreateWindowExW(0, L"BUTTON", L"Search", WS_CHILD | WS_VISIBLE,
 			kLabelsX + 396, 106, 90, 26, hwnd, (HMENU)(INT_PTR)kIdBtnSearch, nullptr, nullptr);
-		g.btnArtKind = CreateWindowExW(0, L"BUTTON", L"", WS_CHILD | WS_VISIBLE,
-			kLabelsX, 144, 486, 26, hwnd, (HMENU)(INT_PTR)kIdBtnArtKind, nullptr, nullptr);
+
+		g.labelGridsPortrait = CreateWindowExW(0, L"STATIC", L"Library cover (600x900):", WS_CHILD,
+			20, 372, 410, 20, hwnd, nullptr, nullptr, nullptr);
+		g.labelGridsHome = CreateWindowExW(0, L"STATIC", L"Home art (920x430):", WS_CHILD,
+			450, 372, 410, 20, hwnd, nullptr, nullptr, nullptr);
 
 		g.listboxGames = CreateWindowExW(WS_EX_CLIENTEDGE, L"LISTBOX", L"",
 			WS_CHILD | WS_VISIBLE | WS_VSCROLL | LBS_NOTIFY,
-			20, 320, 860, 260, hwnd, (HMENU)(INT_PTR)kIdListboxGames, nullptr, nullptr);
+			20, 396, 860, 220, hwnd, (HMENU)(INT_PTR)kIdListboxGames, nullptr, nullptr);
 
-		g.listviewGrids = CreateWindowExW(WS_EX_CLIENTEDGE, WC_LISTVIEWW, L"",
+		// Side by side rather than the single listview this used to be -
+		// both kinds' candidates for the same searched game are available
+		// at once, so picking one never means losing the other's results.
+		g.listviewGridsPortrait = CreateWindowExW(WS_EX_CLIENTEDGE, WC_LISTVIEWW, L"",
 			WS_CHILD | LVS_ICON | LVS_SINGLESEL,
-			20, 320, 860, 260, hwnd, (HMENU)(INT_PTR)kIdListviewGrids, nullptr, nullptr);
+			20, 396, 410, 220, hwnd, (HMENU)(INT_PTR)kIdListviewGridsPortrait, nullptr, nullptr);
+		g.listviewGridsHome = CreateWindowExW(WS_EX_CLIENTEDGE, WC_LISTVIEWW, L"",
+			WS_CHILD | LVS_ICON | LVS_SINGLESEL,
+			450, 396, 410, 220, hwnd, (HMENU)(INT_PTR)kIdListviewGridsHome, nullptr, nullptr);
 
 		g.btnBack = CreateWindowExW(0, L"BUTTON", L"< Back to search results", WS_CHILD | WS_VISIBLE,
-			20, 590, 200, 28, hwnd, (HMENU)(INT_PTR)kIdBtnBack, nullptr, nullptr);
+			20, 626, 200, 28, hwnd, (HMENU)(INT_PTR)kIdBtnBack, nullptr, nullptr);
 		g.btnSkip = CreateWindowExW(0, L"BUTTON", L"Skip this game", WS_CHILD | WS_VISIBLE,
-			760, 590, 120, 28, hwnd, (HMENU)(INT_PTR)kIdBtnSkip, nullptr, nullptr);
+			760, 626, 120, 28, hwnd, (HMENU)(INT_PTR)kIdBtnSkip, nullptr, nullptr);
 
 		g.statusLabel = CreateWindowExW(0, L"STATIC", L"", WS_CHILD | WS_VISIBLE,
-			20, 626, 860, 24, hwnd, nullptr, nullptr, nullptr);
+			20, 662, 860, 24, hwnd, nullptr, nullptr, nullptr);
 
 		g.finalLabel = CreateWindowExW(0, L"STATIC", L"", WS_CHILD,
-			20, 320, 860, 220, hwnd, nullptr, nullptr, nullptr);
+			20, 396, 860, 220, hwnd, nullptr, nullptr, nullptr);
 		g.btnClose = CreateWindowExW(0, L"BUTTON", L"Close", WS_CHILD,
-			760, 590, 120, 28, hwnd, (HMENU)(INT_PTR)kIdBtnClose, nullptr, nullptr);
+			760, 626, 120, 28, hwnd, (HMENU)(INT_PTR)kIdBtnClose, nullptr, nullptr);
 
 		for (HWND h : { g.titleLabel, g.counterLabel, g.editSearch, g.btnSearch, g.listboxGames,
-				g.listviewGrids, g.btnBack, g.btnSkip, g.btnPrev, g.btnNext,
-				g.statusLabel, g.finalLabel, g.btnClose, g.btnSettings, g.btnArtKind })
+				g.listviewGridsPortrait, g.listviewGridsHome, g.labelGridsPortrait, g.labelGridsHome,
+				g.btnBack, g.btnSkip, g.btnPrev, g.btnNext,
+				g.statusLabel, g.finalLabel, g.btnClose, g.btnSettings })
 			setFont(h);
 	}
 }
@@ -779,7 +832,6 @@ std::vector<MetaGame> ArtMatcherGui::Run(const std::vector<MetaGame>& allGames,
 	g.currentIndex = 0;
 	g.matchedGames.clear();
 	g.hasPendingChanges = false;
-	g.artKind = ArtKind::Portrait;
 
 	static std::optional<SteamGridDb> clientStorage;
 	clientStorage.reset();
@@ -804,7 +856,7 @@ std::vector<MetaGame> ArtMatcherGui::Run(const std::vector<MetaGame>& allGames,
 
 	g.hwnd = CreateWindowExW(0, wc.lpszClassName, L"ReviveNext - Manage Library",
 		WS_OVERLAPPEDWINDOW & ~WS_THICKFRAME & ~WS_MAXIMIZEBOX,
-		CW_USEDEFAULT, CW_USEDEFAULT, 900, 700, nullptr, nullptr, wc.hInstance, nullptr);
+		CW_USEDEFAULT, CW_USEDEFAULT, 900, 760, nullptr, nullptr, wc.hInstance, nullptr);
 
 	CreateControls(g.hwnd);
 	ShowWindow(g.hwnd, SW_SHOW);
@@ -818,9 +870,12 @@ std::vector<MetaGame> ArtMatcherGui::Run(const std::vector<MetaGame>& allGames,
 	}
 
 	delete g.coverArt;
-	delete g.currentArt;
-	if (g.imageList)
-		ImageList_Destroy(g.imageList);
+	delete g.currentArtPortrait;
+	delete g.currentArtHome;
+	if (g.imageListPortrait)
+		ImageList_Destroy(g.imageListPortrait);
+	if (g.imageListHome)
+		ImageList_Destroy(g.imageListHome);
 	Gdiplus::GdiplusShutdown(gdiplusToken);
 
 	return std::move(g.matchedGames);

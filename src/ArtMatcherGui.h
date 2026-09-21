@@ -12,12 +12,14 @@
 // against SteamGridDB for Library art - both the portrait cover (600x900)
 // Steam's Library grid view uses, and the widescreen art (920x430) used
 // for the "last played" tile, including SteamVR Home's own dashboard view
-// of it (a toggle button in the window switches which one is being
-// matched for the game on screen). Shows the game's local Meta Horizon
-// cover art (so an ambiguous canonicalName like "insomniac-games-i-28" is
-// actually identifiable) side by side with a searchable, clickable grid of
-// SteamGridDB candidate thumbnails - text alone (as a console prompt
-// would show) isn't enough to confirm a match.
+// of it. A single search covers both: picking a game shows candidate
+// thumbnails for each kind side by side, and either (or both) can be
+// picked in the same step - both current picks stay visible at once, no
+// toggle needed to see or change one versus the other. Shows the game's
+// local Meta Horizon cover art (so an ambiguous canonicalName like
+// "insomniac-games-i-28" is actually identifiable) alongside those
+// candidates - text alone (as a console prompt would show) isn't enough
+// to confirm a match.
 class ArtMatcherGui
 {
 public:
