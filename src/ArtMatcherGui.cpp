@@ -37,6 +37,7 @@ namespace
 	constexpr int kIdBtnBack = 105;
 	constexpr int kIdBtnSkip = 106;
 	constexpr int kIdBtnClose = 107;
+	constexpr int kIdBtnSettings = 108;
 	constexpr UINT_PTR kTimerCheckSteam = 1;
 
 	enum class Mode { PickingGame, PickingGrid, WaitingForSteamClose, Done };
@@ -165,7 +166,7 @@ namespace
 		HWND hwnd = nullptr;
 		HWND editSearch = nullptr, btnSearch = nullptr, listboxGames = nullptr, listviewGrids = nullptr;
 		HWND btnBack = nullptr, btnSkip = nullptr, titleLabel = nullptr, counterLabel = nullptr, statusLabel = nullptr;
-		HWND finalLabel = nullptr, btnClose = nullptr;
+		HWND finalLabel = nullptr, btnClose = nullptr, btnSettings = nullptr;
 
 		Gdiplus::Image* coverArt = nullptr;
 		Gdiplus::Image* currentArt = nullptr; // the art file already saved for the game on screen, if any
@@ -435,6 +436,13 @@ namespace
 				SwitchMode(Mode::PickingGame);
 			else if (LOWORD(wParam) == kIdBtnClose && HIWORD(wParam) == BN_CLICKED)
 				DestroyWindow(hwnd);
+			else if (LOWORD(wParam) == kIdBtnSettings && HIWORD(wParam) == BN_CLICKED)
+			{
+				EnableWindow(hwnd, FALSE);
+				ArtMatcherGui::PromptForApiKey();
+				EnableWindow(hwnd, TRUE);
+				SetForegroundWindow(hwnd);
+			}
 			else if (LOWORD(wParam) == kIdListboxGames && HIWORD(wParam) == LBN_DBLCLK)
 			{
 				int sel = (int)SendMessageW(g.listboxGames, LB_GETCURSEL, 0, 0);
@@ -516,6 +524,9 @@ namespace
 		HFONT font = (HFONT)GetStockObject(DEFAULT_GUI_FONT);
 		auto setFont = [&](HWND h) { SendMessageW(h, WM_SETFONT, (WPARAM)font, TRUE); };
 
+		g.btnSettings = CreateWindowExW(0, L"BUTTON", L"Settings...", WS_CHILD | WS_VISIBLE,
+			760, 16, 120, 26, hwnd, (HMENU)(INT_PTR)kIdBtnSettings, nullptr, nullptr);
+
 		g.titleLabel = CreateWindowExW(0, L"STATIC", L"", WS_CHILD | WS_VISIBLE,
 			kLabelsX, 50, 876 - kLabelsX, 24, hwnd, nullptr, nullptr, nullptr);
 		g.counterLabel = CreateWindowExW(0, L"STATIC", L"", WS_CHILD | WS_VISIBLE,
@@ -549,7 +560,7 @@ namespace
 			760, 590, 120, 28, hwnd, (HMENU)(INT_PTR)kIdBtnClose, nullptr, nullptr);
 
 		for (HWND h : { g.titleLabel, g.counterLabel, g.editSearch, g.btnSearch, g.listboxGames,
-				g.listviewGrids, g.btnBack, g.btnSkip, g.statusLabel, g.finalLabel, g.btnClose })
+				g.listviewGrids, g.btnBack, g.btnSkip, g.statusLabel, g.finalLabel, g.btnClose, g.btnSettings })
 			setFont(h);
 	}
 }
@@ -666,6 +677,28 @@ namespace
 		return result == ERROR_SUCCESS;
 	}
 
+	std::optional<std::string> RegReadSZ(HKEY root, const wchar_t* subkey, const wchar_t* value)
+	{
+		HKEY key;
+		if (RegOpenKeyExW(root, subkey, 0, KEY_READ, &key) != ERROR_SUCCESS)
+			return std::nullopt;
+
+		DWORD type = 0, size = 0;
+		if (RegQueryValueExW(key, value, nullptr, &type, nullptr, &size) != ERROR_SUCCESS || type != REG_SZ || size == 0)
+		{
+			RegCloseKey(key);
+			return std::nullopt;
+		}
+
+		std::wstring wresult(size / sizeof(wchar_t), L'\0');
+		RegQueryValueExW(key, value, nullptr, nullptr, (LPBYTE)wresult.data(), &size);
+		RegCloseKey(key);
+
+		while (!wresult.empty() && wresult.back() == L'\0')
+			wresult.pop_back();
+		return wresult.empty() ? std::nullopt : std::make_optional(WideToUtf8(wresult));
+	}
+
 	LRESULT CALLBACK ApiKeyWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
 	{
 		switch (msg)
@@ -734,6 +767,8 @@ std::optional<std::string> ArtMatcherGui::PromptForApiKey()
 
 	HFONT font = (HFONT)GetStockObject(DEFAULT_GUI_FONT);
 
+	auto existingKey = RegReadSZ(HKEY_CURRENT_USER, L"Software\\ReviveNext", L"SteamGridDbApiKey");
+
 	HWND intro = CreateWindowExW(0, L"STATIC",
 		L"ReviveNext uses SteamGridDB to find Library art (the portrait\r\n"
 		L"cover images Steam's Library view shows) for your games.\r\n\r\n"
@@ -745,15 +780,16 @@ std::optional<std::string> ArtMatcherGui::PromptForApiKey()
 		WS_CHILD | WS_VISIBLE | WS_TABSTOP,
 		20, 100, 460, 20, apiKeyState.hwnd, (HMENU)(INT_PTR)kIdLinkApiKey, nullptr, nullptr);
 
-	HWND keyLabel = CreateWindowExW(0, L"STATIC", L"Paste your API key here:",
+	HWND keyLabel = CreateWindowExW(0, L"STATIC",
+		existingKey ? L"A key is already saved - paste a new one to replace it:" : L"Paste your API key here:",
 		WS_CHILD | WS_VISIBLE, 20, 140, 460, 20, apiKeyState.hwnd, nullptr, nullptr, nullptr);
-	apiKeyState.editKey = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"",
+	apiKeyState.editKey = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", existingKey ? Utf8ToWide(*existingKey).c_str() : L"",
 		WS_CHILD | WS_VISIBLE | ES_AUTOHSCROLL | ES_PASSWORD,
 		20, 162, 460, 26, apiKeyState.hwnd, (HMENU)(INT_PTR)kIdEditApiKey, nullptr, nullptr);
 
 	HWND btnSave = CreateWindowExW(0, L"BUTTON", L"Save",
 		WS_CHILD | WS_VISIBLE, 300, 210, 85, 28, apiKeyState.hwnd, (HMENU)(INT_PTR)kIdBtnSaveKey, nullptr, nullptr);
-	HWND btnSkip = CreateWindowExW(0, L"BUTTON", L"Skip for now",
+	HWND btnSkip = CreateWindowExW(0, L"BUTTON", existingKey ? L"Cancel" : L"Skip for now",
 		WS_CHILD | WS_VISIBLE, 395, 210, 105, 28, apiKeyState.hwnd, (HMENU)(INT_PTR)kIdBtnSkipKey, nullptr, nullptr);
 
 	for (HWND h : { intro, link, keyLabel, apiKeyState.editKey, btnSave, btnSkip })
