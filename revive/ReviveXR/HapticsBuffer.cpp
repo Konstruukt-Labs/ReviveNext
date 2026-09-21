@@ -40,13 +40,17 @@ ovrHapticsPlaybackState HapticsBuffer::GetState()
 {
 	ovrHapticsPlaybackState state = { 0 };
 
-	for (uint8_t i = m_WriteIndex; i != m_ReadIndex; i++)
-		state.RemainingQueueSpace++;
-	state.RemainingQueueSpace++;
-
-	for (uint8_t i = m_ReadIndex; i != m_WriteIndex; i++)
-		state.SamplesQueued++;
-	state.SamplesQueued--;
+	// Same result as counting up from WriteIndex to ReadIndex (and from
+	// ReadIndex to WriteIndex) one increment at a time, up to 255
+	// iterations each - the loop's iteration count is exactly the 8-bit
+	// wraparound difference between the two indices, so computing that
+	// directly gets the same answer without the loop. RemainingQueueSpace/
+	// SamplesQueued are plain int fields (not 8-bit), so the +1/-1 below
+	// must NOT wrap the way the uint8_t subtraction inside them does.
+	uint8_t writeToRead = (uint8_t)(m_ReadIndex - m_WriteIndex);
+	uint8_t readToWrite = (uint8_t)(m_WriteIndex - m_ReadIndex);
+	state.RemainingQueueSpace = (int)writeToRead + 1;
+	state.SamplesQueued = (int)readToWrite - 1;
 
 	return state;
 }
