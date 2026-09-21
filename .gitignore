@@ -1,0 +1,5 @@
+/build/
+
+# Agent instructions for working in this repo - deliberately untracked,
+# each machine keeps its own copy.
+AGENTS.md

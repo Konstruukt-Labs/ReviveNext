@@ -1,0 +1,47 @@
+#pragma once
+
+#include <cstdint>
+#include <optional>
+#include <string>
+#include <unordered_map>
+#include <vector>
+
+#include "GameDiscovery.h"
+
+// Registers/unregisters MetaGames as Steam non-Steam-game shortcuts with
+// the OpenVR ("VR Library") flag set, so they appear in SteamVR's native
+// Library alongside real Steam VR titles, per shortcuts.vdf's documented
+// schema (https://github.com/CorporalQuesadilla/Steam-Shortcut-Manager/wiki).
+//
+// Every entry this tool writes is tagged "ReviveNext" so a later sync can
+// tell which entries it owns and update or remove them without touching
+// anything the user added themselves.
+class SteamShortcuts
+{
+public:
+	// Locates the current Steam user's shortcuts.vdf
+	// (<Steam>/userdata/<accountId>/config/shortcuts.vdf). Returns nullopt
+	// if Steam's install path or the active user can't be determined.
+	static std::optional<std::string> FindShortcutsPath();
+
+	// injectorPath is what "Exe" launches - Revive's ReviveInjector.exe
+	// (quoted automatically), which does the actual Oculus SDK ->
+	// OpenVR/OpenXR translation; ReviveNext only decides which games exist
+	// and what to pass it. Adds a new entry (tagged "ReviveNext" and
+	// "ReviveNext:<canonicalName>", the latter used to match entries back
+	// up across syncs without depending on LaunchOptions staying
+	// unchanged) for each game not already present, updates existing ones
+	// in place if the launch target changed, and removes any previously
+	// -added ReviveNext entry for a game no longer in `games`. Returns
+	// false if the file couldn't be read/written.
+	static bool Sync(const std::vector<MetaGame>& games, const std::string& injectorPath, const std::string& shortcutsPath);
+
+	// Reads back the "appid" Steam itself computed and persisted for each
+	// ReviveNext-owned entry, keyed by canonicalName. Steam assigns this
+	// (a 32-bit value used to name this shortcut's Library grid art files)
+	// the first time it loads a shortcut whose appid is 0 - not something
+	// ReviveNext computes itself, since Steam's exact algorithm for it is
+	// undocumented. Entries Steam hasn't processed yet (still 0, e.g.
+	// Steam hasn't been (re)started since the last sync) are omitted.
+	static std::unordered_map<std::string, uint32_t> ReadAssignedAppIds(const std::string& shortcutsPath);
+};
