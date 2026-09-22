@@ -316,10 +316,22 @@ static void EnsureOVRServiceRunning()
 	{
 		LOG("EnsureOVRServiceRunning: launched %ls (pid %lu)\n", launcherPath.c_str(), pi.dwProcessId);
 		CloseHandle(pi.hThread);
-		CloseHandle(pi.hProcess);
+
 		// Give it a few seconds to establish its IPC broker before the game
 		// (which will ask it to verify entitlement almost immediately) starts.
-		Sleep(3000);
+		// There's no documented signal for "IPC broker ready" to poll for -
+		// OVRServer_x64.exe is closed-source - so this still waits the full
+		// window on the expected/successful path. What we CAN detect is the
+		// process dying before that window elapses (e.g. a broken Oculus
+		// install), so bail out early in that case instead of always paying
+		// the full wait for a launch that's already failed.
+		if (WaitForSingleObject(pi.hProcess, 3000) == WAIT_OBJECT_0)
+		{
+			DWORD exitCode = 0;
+			GetExitCodeProcess(pi.hProcess, &exitCode);
+			LOG("EnsureOVRServiceRunning: process exited early (code %lu)\n", exitCode);
+		}
+		CloseHandle(pi.hProcess);
 	}
 	else
 	{
