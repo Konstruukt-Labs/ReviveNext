@@ -42,9 +42,29 @@ ovrTextureSwapChainD3D12::~ovrTextureSwapChainD3D12()
 
 ovrResult ovrTextureSwapChainD3D12::Commit(ovrSession session)
 {
-	m_Queue->ExecuteCommandLists(1, (ID3D12CommandList**)&m_ReleaseBarriers[CurrentIndex]);
+	// The release barrier (for the image just finished rendering) and the
+	// acquire barrier (for the image xrAcquireSwapchainImage just handed
+	// back) used to be two separate GPU submissions, straddling the XR
+	// release/acquire calls so the second barrier could reference the new
+	// CurrentIndex. But xrReleaseSwapchainImage/xrAcquireSwapchainImage are
+	// CPU-side bookkeeping with no GPU work of their own to order against -
+	// what actually matters is that both barriers reach the same m_Queue,
+	// in order, before the runtime's own compositing work (submitted later,
+	// in ovr_EndFrame) touches these images, which holds either way. So
+	// resolve both indices first, then submit both command lists in a
+	// single call - same relative order (D3D12 guarantees command lists
+	// passed together in one ExecuteCommandLists execute in array order,
+	// which matters when Desc.StaticImage leaves CurrentIndex unchanged
+	// and both barriers target the same resource).
+	uint32_t releasedIndex = CurrentIndex;
 	ovrResult result = ovrTextureSwapChainData::Commit(session);
-	m_Queue->ExecuteCommandLists(1, (ID3D12CommandList**)&m_AcquireBarriers[CurrentIndex]);
+
+	ID3D12CommandList* barriers[] =
+	{
+		(ID3D12CommandList*)m_ReleaseBarriers[releasedIndex],
+		(ID3D12CommandList*)m_AcquireBarriers[CurrentIndex],
+	};
+	m_Queue->ExecuteCommandLists(2, barriers);
 	return result;
 }
 

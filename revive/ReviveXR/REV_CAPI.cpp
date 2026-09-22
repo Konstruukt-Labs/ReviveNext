@@ -998,10 +998,20 @@ OVR_PUBLIC_FUNCTION(ovrResult) ovr_EndFrame(ovrSession session, long long frameI
 		return XR::Recti(rect);
 	};
 
+	// vector, not list: elements' addresses are taken and stored (view.next,
+	// projection.views, layers itself) while more elements are still being
+	// pushed later in the same loop, so each container must never reallocate
+	// mid-loop - reserve() to the true worst case up front instead. layerData/
+	// viewData get at most one entry per layer; depthData gets at most one
+	// per eye per layer.
 	std::vector<XrCompositionLayerBaseHeader*> layers;
-	std::list<XrCompositionLayerUnion> layerData;
-	std::list<XrCompositionLayerProjectionViewStereo> viewData;
-	std::list<XrCompositionLayerDepthInfoKHR> depthData;
+	layers.reserve(layerCount);
+	std::vector<XrCompositionLayerUnion> layerData;
+	layerData.reserve(layerCount);
+	std::vector<XrCompositionLayerProjectionViewStereo> viewData;
+	viewData.reserve(layerCount);
+	std::vector<XrCompositionLayerDepthInfoKHR> depthData;
+	depthData.reserve((size_t)layerCount * ovrEye_Count);
 	for (unsigned int i = 0; i < layerCount; i++)
 	{
 		ovrLayer_Union* layer = (ovrLayer_Union*)layerPtrList[i];
