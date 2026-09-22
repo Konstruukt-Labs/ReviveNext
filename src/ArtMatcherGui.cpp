@@ -87,6 +87,43 @@ namespace
 	// are already valid, collision-free file names) rather than by any
 	// Steam-assigned shortcut id. The same files feed the SteamVR
 	// application registration's image_path.
+	// The executable's base name ("Game\\Stormland.exe" -> "Stormland") -
+	// a better default search seed than the store manifest's title, which
+	// is what an unconfirmed game's title still is. Known default
+	// suffixes Unreal and other engines append to shipping builds are
+	// stripped - they say nothing about the game's name.
+	std::string ExeSearchSeed(const MetaGame& game)
+	{
+		const std::string& file = game.launchFile;
+		size_t nameStart = file.find_last_of("\\/") + 1; // 0 when no separator
+		std::string name = file.substr(nameStart);
+		if (name.size() >= 4 && _stricmp(name.c_str() + name.size() - 4, ".exe") == 0)
+			name.resize(name.size() - 4);
+
+		constexpr const char* kStrippedSuffixes[] = {
+			"-Win64-Shipping", "-Win32-Shipping", "-Win64-Test", "-Win64-Debug",
+			"-Shipping", "-Test", "-Debug", "-Win64", "-Win32",
+			"-Win64-Shipping_R", "-EGS", "-Steam",
+		};
+		bool changed = true;
+		while (changed)
+		{
+			changed = false;
+			for (const char* suffix : kStrippedSuffixes)
+			{
+				size_t len = strlen(suffix);
+				if (name.size() > len
+					&& _stricmp(name.c_str() + name.size() - len, suffix) == 0)
+				{
+					name.resize(name.size() - len);
+					changed = true;
+					break;
+				}
+			}
+		}
+		return name;
+	}
+
 	std::string ComputeStem(const std::string& canonicalName, const std::string& artDir, ArtKind kind)
 	{
 		std::string name = canonicalName + (kind == ArtKind::Portrait ? "p" : "");
@@ -651,7 +688,14 @@ namespace
 			SetStatus(L"Set a SteamGridDB API key (Settings...) to enable Library art matching.");
 		}
 
-		SetWindowTextW(g.editSearch, Utf8ToWide(game.title).c_str());
+		// Pre-fill the search with the confirmed name once there is one (a
+		// picked SteamGridDB title, via the overrides), the executable's
+		// base name until then.
+		const auto overrides = TitleOverrides::Load();
+		const std::string& seed = overrides.count(game.canonicalName) != 0
+			? game.title
+			: ExeSearchSeed(game);
+		SetWindowTextW(g.editSearch, Utf8ToWide(seed).c_str());
 
 		InvalidateRect(g.hwnd, nullptr, TRUE);
 		if (canMatchArt)
