@@ -1,6 +1,6 @@
 #include "GameDiscovery.h"
 #include "GridArtSync.h"
-#include "SteamShortcuts.h"
+#include "SteamVrAppRegistration.h"
 #include "TitleOverrides.h"
 
 #include <windows.h>
@@ -92,17 +92,10 @@ namespace
 			return 0;
 		}
 
-		auto shortcutsPath = SteamShortcuts::FindShortcutsPath();
-		if (!shortcutsPath)
-		{
-			ShowError(L"Could not locate Steam's shortcuts.vdf (is Steam installed and has it been run at least once?).");
-			return 1;
-		}
-
 		// The actual launch target is Revive's own ReviveInjector.exe,
-		// bundled alongside this exe (see runtime/ and CMakeLists.txt) -
-		// it does the real Oculus SDK -> OpenVR/OpenXR translation.
-		// ReviveNext itself is never what Steam launches.
+		// bundled alongside this exe (see CMakeLists.txt) - it does the real
+		// Oculus SDK -> OpenVR/OpenXR translation, and it's what the
+		// SteamVR-registered application entries launch.
 		wchar_t selfPathW[MAX_PATH];
 		GetModuleFileNameW(nullptr, selfPathW, MAX_PATH);
 		int len = WideCharToMultiByte(CP_UTF8, 0, selfPathW, -1, nullptr, 0, nullptr, nullptr);
@@ -123,31 +116,33 @@ namespace
 
 		EnsureActionManifestEnvVar(selfDir);
 
-		// Sync() already sees every entry's Steam-assigned appid while
-		// writing shortcuts.vdf back out - handing it here saves
-		// GridArtSync a second full read+parse of the same file to
-		// recover the same data immediately after.
-		std::unordered_map<std::string, uint32_t> appIds;
-		if (!SteamShortcuts::Sync(games, injectorPath, *shortcutsPath, &appIds))
-		{
-			ShowError(L"Failed to write shortcuts.vdf.");
-			return 1;
-		}
+		// ReviveNext's own art storage (see ArtMatcherGui::Run) - survives
+		// independently of Steam, and carries over anything previously
+		// matched under Steam's shortcut naming (see GridArtSync::Run).
+		std::string artDir = selfDir + "Art";
+		GridArtSync::Run(games, injectorPath, artDir);
 
-		std::string gridDir = (std::filesystem::path(*shortcutsPath).parent_path() / "grid").string();
-		GridArtSync::Run(games, appIds, injectorPath, *shortcutsPath, gridDir);
+		// Register each game as a visible SteamVR application last, so it
+		// uses the art GridArtSync just wrote/matched and any titles picked
+		// in that session - launching from SteamVR's own Library then gets
+		// SteamVR's app-launch flow end to end. See SteamVrAppRegistration.h.
+		// Needs SteamVR running; silently skipped otherwise (entries persist
+		// in SteamVR's storage once registered).
+		titleOverrides = TitleOverrides::Load();
+		for (auto& game : games)
+			if (auto it = titleOverrides.find(game.canonicalName); it != titleOverrides.end())
+				game.title = it->second;
+		SteamVrAppRegistration::Sync(games, injectorPath, artDir);
 
 		return 0;
 	}
 }
 
-// ReviveNext: finds installed Meta Horizon (Oculus Rift-platform) games and
-// registers each as a Steam non-Steam-game shortcut with the OpenVR flag
-// set, so they show up natively in SteamVR's own Library alongside real
-// Steam VR titles - no custom dashboard/overlay UI of its own. Run this
-// (manually, or however it ends up being triggered - see AGENTS.md/README
-// for the current state of that decision) whenever the installed game list
-// might have changed.
+// ReviveNext: finds installed Meta Horizon (Oculus Rift-platform) games,
+// lets their SteamVR Library art be matched against SteamGridDB, and
+// registers each as a SteamVR application so they appear - and launch -
+// natively in SteamVR's own Library. Run this whenever the installed game
+// list might have changed.
 int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
 {
 	return RunMain();

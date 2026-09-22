@@ -1,6 +1,6 @@
 #include "ArtMatcherGui.h"
+#include "GameDiscovery.h"
 #include "SteamGridDb.h"
-#include "SteamShortcuts.h"
 #include "TitleOverrides.h"
 
 #include <windows.h>
@@ -8,7 +8,6 @@
 #include <shellapi.h>
 #include <shlwapi.h>
 #include <gdiplus.h>
-#include <tlhelp32.h>
 
 #include <filesystem>
 #include <fstream>
@@ -51,37 +50,13 @@ namespace
 	constexpr int kIdBtnClose = 108;
 	constexpr int kIdBtnSettings = 109;
 	constexpr int kIdBtnPrev = 110;
-	constexpr UINT_PTR kTimerCheckSteam = 1;
 
-	enum class Mode { PickingGame, PickingGrid, WaitingForSteamClose, Done };
+	enum class Mode { PickingGame, PickingGrid };
 
-	// The two Steam-recognized art shapes, both matched and shown at once -
-	// see SteamGridDb::GetPortraitGrids/GetWidescreenGrids and ComputeStem
+	// The two art shapes, both matched and shown at once - see
+	// SteamGridDb::GetPortraitGrids/GetWidescreenGrids and ComputeStem
 	// for what each one is keyed and searched by.
 	enum class ArtKind { Portrait, Home };
-
-	bool IsProcessRunning(const wchar_t* exeName)
-	{
-		HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
-		if (snapshot == INVALID_HANDLE_VALUE)
-			return false;
-
-		bool found = false;
-		PROCESSENTRY32W entry = { sizeof(entry) };
-		if (Process32FirstW(snapshot, &entry))
-		{
-			do
-			{
-				if (_wcsicmp(entry.szExeFile, exeName) == 0)
-				{
-					found = true;
-					break;
-				}
-			} while (Process32NextW(snapshot, &entry));
-		}
-		CloseHandle(snapshot);
-		return found;
-	}
 
 	std::wstring Utf8ToWide(const std::string& s)
 	{
@@ -103,17 +78,16 @@ namespace
 		return result;
 	}
 
-	// <gridDir>/<Steam-assigned appid>p for the Library portrait cover,
-	// <gridDir>/<Steam-assigned appid> (no suffix) for the widescreen Home
-	// art - both filenames Steam itself looks for. The appid comes from
-	// Steam (see SteamShortcuts::ReadAssignedAppIds), not anything
-	// ReviveNext computes - Steam's own algorithm for it is undocumented
-	// and not worth reverse-engineering when Steam will just tell us
-	// directly.
-	std::string ComputeStem(uint32_t appid, const std::string& gridDir, ArtKind kind)
+	// <artDir>/<canonicalName>p for the portrait cover,
+	// <artDir>/<canonicalName> (no suffix) for the widescreen art -
+	// ReviveNext's own storage, keyed by the game itself (canonical names
+	// are already valid, collision-free file names) rather than by any
+	// Steam-assigned shortcut id. The same files feed the SteamVR
+	// application registration's image_path.
+	std::string ComputeStem(const std::string& canonicalName, const std::string& artDir, ArtKind kind)
 	{
-		std::string name = std::to_string(appid) + (kind == ArtKind::Portrait ? "p" : "");
-		return (fs::path(gridDir) / name).string();
+		std::string name = canonicalName + (kind == ArtKind::Portrait ? "p" : "");
+		return (fs::path(artDir) / name).string();
 	}
 
 	constexpr const char* kArtExtensions[] = { ".png", ".jpg", ".jpeg", ".webp" };
@@ -199,10 +173,8 @@ namespace
 		HIMAGELIST imageListPortrait = nullptr, imageListHome = nullptr;
 
 		std::vector<MetaGame> games;
-		std::vector<MetaGame> allGames; // full original list, needed for the final re-sync
 		size_t currentIndex = 0;
-		std::string gridDir, injectorPath, shortcutsPath;
-		std::unordered_map<std::string, uint32_t> appIds;
+		std::string artDir, injectorPath;
 		SteamGridDb* client = nullptr; // null when no API key is configured - search is unavailable, not the whole window
 
 		std::vector<SgdbGame> gameResults;
@@ -212,7 +184,6 @@ namespace
 		ExistingState existingPortrait = ExistingState::None, existingHome = ExistingState::None;
 
 		std::vector<MetaGame> matchedGames; // returned to the caller when the window closes
-		bool hasPendingChanges = false; // matched art this session - needs the Steam-closed resync to apply titles
 
 	} g;
 
@@ -338,68 +309,20 @@ namespace
 
 	void LoadGameState();
 
-	// Re-syncs shortcuts.vdf with every currently-known title override (not
-	// just this session's, so an earlier session's picks are never lost).
-	// Only safe to call once Steam is confirmed closed.
-	void FinishAndResync()
-	{
-		SetStatus(L"Applying changes...");
-
-		auto overrides = TitleOverrides::Load();
-		std::vector<MetaGame> finalGames = g.allGames;
-		for (auto& game : finalGames)
-			if (auto it = overrides.find(game.canonicalName); it != overrides.end())
-				game.title = it->second;
-
-		bool ok = SteamShortcuts::Sync(finalGames, g.injectorPath, g.shortcutsPath);
-
-		g.mode = Mode::Done;
-		SetWindowTextW(g.finalLabel, ok
-			? L"Done! Your changes are applied. You can start Steam again."
-			: L"Something went wrong writing shortcuts.vdf - check ReviveNext's console output.");
-		SetStatus(L"");
-		ShowWindow(g.btnClose, SW_SHOW);
-	}
-
-	void EnterWaitingState()
-	{
-		g.mode = Mode::WaitingForSteamClose;
-		for (HWND h : { g.listboxGames, g.listviewGridsPortrait, g.listviewGridsHome, g.labelGridsPortrait,
-				g.labelGridsHome, g.btnBack, g.btnSkip, g.btnPrev,
-				g.editSearch, g.btnSearch, g.titleLabel, g.counterLabel, g.btnSettings })
-			ShowWindow(h, SW_HIDE);
-
-		std::wstring msg =
-			L"You made changes this session.\r\n\r\n"
-			L"To apply them to Steam's Library, fully close Steam now\r\n"
-			L"(right-click its tray icon → Exit - just closing the window isn't enough).\r\n\r\n"
-			L"This will update automatically once Steam has closed, and you can\r\n"
-			L"start Steam again right after.";
-		SetWindowTextW(g.finalLabel, msg.c_str());
-		ShowWindow(g.finalLabel, SW_SHOW);
-		SetStatus(L"Waiting for Steam to close...");
-
-		SetTimer(g.hwnd, kTimerCheckSteam, 1000, nullptr);
-	}
-
 	void AdvanceToNext()
 	{
 		g.currentIndex++;
 		if (g.currentIndex >= g.games.size())
 		{
-			if (g.hasPendingChanges)
-				EnterWaitingState();
-			else
-				DestroyWindow(g.hwnd);
+			DestroyWindow(g.hwnd);
 			return;
 		}
 		LoadGameState();
 	}
 
 	// Pure browsing, unlike AdvanceToNext - never triggers the end-of-list
-	// finish flow, just moves the cursor. Lets the user jump straight back
-	// to one specific game (e.g. one just re-added to the Library, once
-	// Steam has assigned it a fresh appid) without re-walking the list.
+	// finish flow, just moves the cursor, so the user can jump straight
+	// back to one specific game without re-walking the list.
 	void GoToPrev()
 	{
 		if (g.currentIndex > 0)
@@ -418,8 +341,6 @@ namespace
 	void RefreshArtStatus()
 	{
 		const MetaGame& game = g.games[g.currentIndex];
-		auto appIdIt = g.appIds.find(game.canonicalName);
-		bool hasAppId = appIdIt != g.appIds.end();
 
 		delete g.currentArtPortrait;
 		g.currentArtPortrait = nullptr;
@@ -428,18 +349,15 @@ namespace
 		g.existingPortrait = ExistingState::None;
 		g.existingHome = ExistingState::None;
 
-		if (hasAppId)
-		{
-			std::string stemP = ComputeStem(appIdIt->second, g.gridDir, ArtKind::Portrait);
-			g.existingPortrait = GetExistingState(stemP);
-			if (auto f = FindExistingArtFile(stemP))
-				g.currentArtPortrait = new Gdiplus::Image(Utf8ToWide(*f).c_str());
+		std::string stemP = ComputeStem(game.canonicalName, g.artDir, ArtKind::Portrait);
+		g.existingPortrait = GetExistingState(stemP);
+		if (auto f = FindExistingArtFile(stemP))
+			g.currentArtPortrait = new Gdiplus::Image(Utf8ToWide(*f).c_str());
 
-			std::string stemH = ComputeStem(appIdIt->second, g.gridDir, ArtKind::Home);
-			g.existingHome = GetExistingState(stemH);
-			if (auto f = FindExistingArtFile(stemH))
-				g.currentArtHome = new Gdiplus::Image(Utf8ToWide(*f).c_str());
-		}
+		std::string stemH = ComputeStem(game.canonicalName, g.artDir, ArtKind::Home);
+		g.existingHome = GetExistingState(stemH);
+		if (auto f = FindExistingArtFile(stemH))
+			g.currentArtHome = new Gdiplus::Image(Utf8ToWide(*f).c_str());
 
 		auto describe = [](const wchar_t* name, ExistingState s)
 		{
@@ -466,10 +384,7 @@ namespace
 			return;
 
 		MetaGame& game = g.games[g.currentIndex];
-		auto appIdIt = g.appIds.find(game.canonicalName);
-		if (appIdIt == g.appIds.end())
-			return; // shouldn't be reachable - the picker UI is hidden without an appid
-		std::string stem = ComputeStem(appIdIt->second, g.gridDir, kind);
+		std::string stem = ComputeStem(game.canonicalName, g.artDir, kind);
 		std::string ext = fs::path(results[idx].url).extension().string();
 		if (ext.empty())
 			ext = ".png";
@@ -510,7 +425,6 @@ namespace
 				TitleOverrides::Set(game.canonicalName, g.pickedGameName);
 			}
 			g.matchedGames.push_back(game);
-			g.hasPendingChanges = true;
 			// Stays on this game and in the grid picker (rather than
 			// advancing) so picking the other kind for the same game -
 			// the common case - never needs a second search.
@@ -525,51 +439,22 @@ namespace
 	void SkipCurrent()
 	{
 		// Only actually marks-as-skipped (and only ever touches a file)
-		// when nothing is there yet for that kind, and only when there's
-		// an appid to key it under. Picking a NEW grid (ChooseGrid) is the
-		// only action that overwrites existing art/skip state - this
-		// button must never destroy a previous pick just by clicking past
-		// an already-matched game to browse the rest.
-		auto appIdIt = g.appIds.find(g.games[g.currentIndex].canonicalName);
-		if (appIdIt != g.appIds.end())
+		// when nothing is there yet for that kind. Picking a NEW grid
+		// (ChooseGrid) is the only action that overwrites existing
+		// art/skip state - this button must never destroy a previous pick
+		// just by clicking past an already-matched game to browse the rest.
+		for (ArtKind kind : { ArtKind::Portrait, ArtKind::Home })
 		{
-			for (ArtKind kind : { ArtKind::Portrait, ArtKind::Home })
+			std::string stem = ComputeStem(g.games[g.currentIndex].canonicalName, g.artDir, kind);
+			if (GetExistingState(stem) == ExistingState::None)
 			{
-				std::string stem = ComputeStem(appIdIt->second, g.gridDir, kind);
-				if (GetExistingState(stem) == ExistingState::None)
-				{
-					std::ofstream marker(stem + ".skip");
-				}
+				std::ofstream marker(stem + ".skip");
 			}
 		}
 		AdvanceToNext();
 	}
 
 	void LoadGameState();
-
-	// Lighter than a full LoadGameState() - only checks whether an appid
-	// has newly appeared for the game on screen, and only does anything
-	// (a full refresh) if it has. Called on refocus rather than
-	// LoadGameState() directly so alt-tabbing back from Steam doesn't
-	// wipe a search term the user was mid-typing when nothing actually
-	// changed.
-	void RefreshOnFocus()
-	{
-		if (g.games.empty() || (g.mode != Mode::PickingGame && g.mode != Mode::PickingGrid))
-			return;
-
-		const std::string& name = g.games[g.currentIndex].canonicalName;
-		if (g.appIds.count(name))
-			return;
-
-		auto fresh = SteamShortcuts::ReadAssignedAppIds(g.shortcutsPath);
-		auto it = fresh.find(name);
-		if (it != fresh.end())
-		{
-			g.appIds[name] = it->second;
-			LoadGameState();
-		}
-	}
 
 	void LoadGameState()
 	{
@@ -582,31 +467,13 @@ namespace
 
 		SetWindowTextW(g.titleLabel, Utf8ToWide(game.title).c_str());
 
-		// appIds is otherwise just a snapshot from when the window opened,
-		// so it never learns about an id Steam assigns later in the same
-		// session (e.g. the user cycles Steam - possibly more than once,
-		// since a freshly re-added game needs a sync to exist before Steam
-		// can assign anything - while this window stays open). Re-checking
-		// shortcuts.vdf is cheap, so do it live whenever the game on
-		// screen doesn't have one yet, rather than requiring a fresh
-		// ReviveNext run to notice.
-		if (g.appIds.find(game.canonicalName) == g.appIds.end())
-		{
-			auto fresh = SteamShortcuts::ReadAssignedAppIds(g.shortcutsPath);
-			auto it = fresh.find(game.canonicalName);
-			if (it != fresh.end())
-				g.appIds[game.canonicalName] = it->second;
-		}
-
-		bool hasAppId = g.appIds.count(game.canonicalName) != 0;
-		bool canMatchArt = hasAppId && g.client != nullptr;
+		bool canMatchArt = g.client != nullptr;
 
 		RefreshArtStatus();
 
-		// Art matching needs both an API key (to search) and a
-		// Steam-assigned appid (to know what files to save to) - hide the
-		// whole search/pick flow and explain why when either is missing,
-		// rather than leaving nonfunctional controls visible.
+		// Art matching needs an API key (to search) - hide the whole
+		// search/pick flow and explain why when it's missing, rather than
+		// leaving nonfunctional controls visible.
 		for (HWND h : { g.editSearch, g.btnSearch, g.listboxGames, g.listviewGridsPortrait, g.listviewGridsHome,
 				g.labelGridsPortrait, g.labelGridsHome, g.btnBack })
 			ShowWindow(h, SW_HIDE);
@@ -619,9 +486,7 @@ namespace
 		else
 		{
 			g.mode = Mode::PickingGame;
-			SetStatus(!hasAppId
-				? L"Steam hasn't assigned this an id yet - launch Steam once after syncing to enable Library art matching."
-				: L"Set a SteamGridDB API key (Settings...) to enable Library art matching.");
+			SetStatus(L"Set a SteamGridDB API key (Settings...) to enable Library art matching.");
 		}
 
 		SetWindowTextW(g.editSearch, Utf8ToWide(game.title).c_str());
@@ -658,25 +523,6 @@ namespace
 				int sel = (int)SendMessageW(g.listboxGames, LB_GETCURSEL, 0, 0);
 				ShowGridsForGame(sel);
 			}
-			return 0;
-
-		case WM_TIMER:
-			if (wParam == kTimerCheckSteam && !IsProcessRunning(L"steam.exe"))
-			{
-				KillTimer(hwnd, kTimerCheckSteam);
-				FinishAndResync();
-			}
-			return 0;
-
-		case WM_ACTIVATE:
-			// Regaining focus (e.g. the user switched to Steam to cycle
-			// it, then alt-tabbed back here) is exactly when a
-			// Steam-assigned appid is likely to have just appeared -
-			// check for that instead of leaving the game on screen stuck
-			// showing "no appid yet" until the user happens to navigate
-			// away and back.
-			if (LOWORD(wParam) != WA_INACTIVE)
-				RefreshOnFocus();
 			return 0;
 
 		case WM_NOTIFY:
@@ -741,19 +587,10 @@ namespace
 		}
 
 		case WM_CLOSE:
-			// Closing mid-session with unsaved picks routes through the
-			// same "wait for Steam, then apply" flow rather than losing
-			// them - the matcher's own job is done either way, so no
-			// separate ReviveNext re-run should be needed to see them.
-			if ((g.mode == Mode::PickingGame || g.mode == Mode::PickingGrid) && g.hasPendingChanges)
-				EnterWaitingState();
-			else
-				DestroyWindow(hwnd);
+			DestroyWindow(hwnd);
 			return 0;
 
 		case WM_DESTROY:
-			if (g.mode == Mode::WaitingForSteamClose)
-				KillTimer(hwnd, kTimerCheckSteam);
 			PostQuitMessage(0);
 			return 0;
 		}
@@ -838,30 +675,24 @@ namespace
 }
 
 std::vector<MetaGame> ArtMatcherGui::Run(const std::vector<MetaGame>& allGames,
-	const std::unordered_map<std::string, uint32_t>& appIds,
-	const std::string& injectorPath, const std::string& shortcutsPath,
-	const std::string& gridDir, const std::optional<std::string>& apiKey)
+	const std::string& injectorPath, const std::string& artDir,
+	const std::optional<std::string>& apiKey)
 {
 	if (allGames.empty())
 		return {};
 
 	std::error_code ec;
-	fs::create_directories(gridDir, ec);
+	fs::create_directories(artDir, ec);
 
 	// Every discovered game is shown, regardless of whether it's already
-	// matched, skipped, or has no Steam-assigned appid yet - this is a
-	// review/edit tool, not just an initial-setup wizard. LoadGameState()
-	// shows each one's current status and disables whatever isn't
-	// currently possible for it.
+	// matched or skipped - this is a review/edit tool, not just an
+	// initial-setup wizard. LoadGameState() shows each one's current
+	// status and disables whatever isn't currently possible for it.
 	g.games = allGames;
-	g.allGames = allGames;
-	g.gridDir = gridDir;
+	g.artDir = artDir;
 	g.injectorPath = injectorPath;
-	g.shortcutsPath = shortcutsPath;
-	g.appIds = appIds;
 	g.currentIndex = 0;
 	g.matchedGames.clear();
-	g.hasPendingChanges = false;
 
 	static std::optional<SteamGridDb> clientStorage;
 	clientStorage.reset();

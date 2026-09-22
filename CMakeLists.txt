@@ -12,8 +12,7 @@ add_subdirectory(${CMAKE_SOURCE_DIR}/3rdparty/json)
 add_executable(${APP_NAME} WIN32
     "src/Main.cpp"
     "src/GameDiscovery.cpp"
-    "src/BinaryVdf.cpp"
-    "src/SteamShortcuts.cpp"
+    "src/SteamVrAppRegistration.cpp"
     "src/IconConverter.cpp"
     "src/SteamGridDb.cpp"
     "src/GridArtSync.cpp"
@@ -23,9 +22,16 @@ add_executable(${APP_NAME} WIN32
 
 target_compile_features(${APP_NAME} PUBLIC cxx_std_23)
 
+# OpenVR for SteamVrAppRegistration (registering the per-game
+# revive.app.* entries SteamVR identifies launched games with). Uses
+# the pristine loader shipped in the vendored submodule.
+set(OPENVR_DIR "${CMAKE_SOURCE_DIR}/revive/Externals/openvr")
+target_include_directories(${APP_NAME} PRIVATE "${OPENVR_DIR}/headers")
+
 target_link_libraries(${APP_NAME}
     PRIVATE
         nlohmann_json::nlohmann_json
+        "${OPENVR_DIR}/lib/win64/openvr_api.lib"
         windowscodecs
         ole32
         winhttp
@@ -83,6 +89,13 @@ add_dependencies(${APP_NAME} revive_binaries)
 
 add_custom_command(TARGET ${APP_NAME} POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:${APP_NAME}>/Input"
+)
+# The openvr_api.dll ReviveNext.exe itself loads for registration -
+# distinct from the injected openvr_api64.dll shim games get.
+add_custom_command(TARGET ${APP_NAME} POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "${OPENVR_DIR}/bin/win64/openvr_api.dll"
+        "$<TARGET_FILE_DIR:${APP_NAME}>"
 )
 foreach(revive_binary ReviveInjector.exe LibRevive64.dll LibReviveXR64.dll openvr_api64.dll)
     add_custom_command(TARGET ${APP_NAME} POST_BUILD

@@ -312,7 +312,12 @@ static void EnsureOVRServiceRunning()
 
 	STARTUPINFOW si = { sizeof(si) };
 	PROCESS_INFORMATION pi = {};
-	if (CreateProcessW(launcherPath.c_str(), nullptr, nullptr, nullptr, FALSE, 0, nullptr, launcherDir.c_str(), &si, &pi))
+	// CREATE_NO_WINDOW: OVRServer_x64.exe is a console-subsystem binary;
+	// without this it pops up a console window every time it's cold-started
+	// (visible whenever something without a console of its own - e.g.
+	// SteamVR's LaunchApplication flow - starts the injector).
+	if (CreateProcessW(launcherPath.c_str(), nullptr, nullptr, nullptr, FALSE,
+		CREATE_NO_WINDOW, nullptr, launcherDir.c_str(), &si, &pi))
 	{
 		LOG("EnsureOVRServiceRunning: launched %ls (pid %lu)\n", launcherPath.c_str(), pi.dwProcessId);
 		CloseHandle(pi.hThread);
@@ -360,6 +365,7 @@ int wmain(int argc, wchar_t *argv[]) {
 	}
 
 	LOG("Launched injector with: %ls\n", GetCommandLine());
+
 
 	char moduleDir[MAX_PATH];
 	GetModuleFileNameA(NULL, moduleDir, MAX_PATH);

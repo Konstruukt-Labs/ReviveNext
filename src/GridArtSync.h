@@ -1,32 +1,27 @@
 #pragma once
 
-#include <cstdint>
 #include <string>
-#include <unordered_map>
 #include <vector>
 
 #include "GameDiscovery.h"
 
-// Entry point for the post-sync review window (ArtMatcherGui): reads the
-// SteamGridDB API key setting (prompting for one if it's never been set)
-// and hands off to it. The window itself covers both Library art matching
-// and removing/re-adding games to the Library, so it opens regardless of
-// whether a key ends up configured - art search is just unavailable
+// Entry point for the art review window (ArtMatcherGui): reads the
+// SteamGridDB API key setting and hands off to it. The window itself
+// covers art matching for every discovered game, so it opens regardless
+// of whether a key ends up configured - art search is just unavailable
 // without one.
 class GridArtSync
 {
 public:
-	// appIds is whatever the caller's just-completed SteamShortcuts::Sync
-	// already knows (see its outAppIds parameter) - reused as-is rather
-	// than this re-reading and re-parsing shortcuts.vdf right after Sync
-	// wrote it, just to recover the same data.
+	// artDir is ReviveNext's own art storage (see ArtMatcherGui::Run).
+	// Before opening the window, any art still sitting in Steam's grid
+	// dir under the old shortcut-appid naming (from when ReviveNext
+	// still synced Steam Library shortcuts) is migrated into artDir
+	// under its per-game names, using the appid mapping recorded in the
+	// SteamVR registration manifest written back then.
 	//
-	// Blocks until the user closes the review window. If anything was
-	// matched, the window itself walks the user through closing Steam and
-	// applies the picked titles to shortcuts.vdf automatically before
-	// returning - no separate ReviveNext re-run needed. Returns the games
-	// that were matched (not those only included/excluded).
+	// Blocks until the user closes the review window; everything picked
+	// is written immediately. Returns the games that were matched.
 	static std::vector<MetaGame> Run(const std::vector<MetaGame>& games,
-		const std::unordered_map<std::string, uint32_t>& appIds,
-		const std::string& injectorPath, const std::string& shortcutsPath, const std::string& gridDir);
+		const std::string& injectorPath, const std::string& artDir);
 };
