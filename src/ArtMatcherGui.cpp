@@ -1,14 +1,17 @@
 #include "ArtMatcherGui.h"
 #include "GameDiscovery.h"
+#include "resource.h"
 #include "SteamGridDb.h"
 #include "TitleOverrides.h"
 
 #include <windows.h>
 #include <commctrl.h>
+#include <objidl.h>
 #include <shellapi.h>
 #include <shlwapi.h>
 #include <gdiplus.h>
 
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <optional>
@@ -126,6 +129,156 @@ namespace
 		fs::remove(stem + ".skip", ec);
 		for (const char* ext : kArtExtensions)
 			fs::remove(stem + ext, ec);
+	}
+
+	// The ReviveNext badges, loaded lazily from the exe's resources (see
+	// src/ReviveNext.rc): 96 px for the portrait Library cover, 48 px for
+	// the widescreen Home art. Null if unavailable - a missing badge just
+	// means unbadged art, never an error. First call happens from
+	// ApplyBadge, i.e. well after GdiplusStartup in Run().
+	Gdiplus::Image* GetBadge(ArtKind kind)
+	{
+		static Gdiplus::Image* badges[2] = {};
+		const int index = kind == ArtKind::Portrait ? 0 : 1;
+		if (badges[index])
+			return badges[index];
+
+		const int id = kind == ArtKind::Portrait ? IDB_REVIVE_BADGE_PORTRAIT : IDB_REVIVE_BADGE_HOME;
+		HRSRC res = FindResourceW(nullptr, MAKEINTRESOURCEW(id), MAKEINTRESOURCEW(10) /* RT_RCDATA */);
+			if (!res)
+				return nullptr;
+			HGLOBAL loaded = LoadResource(nullptr, res);
+			if (!loaded)
+				return nullptr;
+			void* data = LockResource(loaded);
+			DWORD size = SizeofResource(nullptr, res);
+			if (!data || !size)
+				return nullptr;
+
+			// Copy into a real HGLOBAL: resource memory is not a handle
+			// CreateStreamOnHGlobal can take ownership of.
+			HGLOBAL copy = GlobalAlloc(GMEM_MOVEABLE, size);
+			if (!copy)
+				return nullptr;
+			void* dst = GlobalLock(copy);
+			memcpy(dst, data, size);
+			GlobalUnlock(copy);
+
+			IStream* stream = nullptr;
+			if (CreateStreamOnHGlobal(copy, TRUE, &stream) != S_OK)
+			{
+				GlobalFree(copy);
+				return nullptr;
+			}
+			Gdiplus::Image* image = new Gdiplus::Image(stream);
+			stream->Release();
+			if (image->GetLastStatus() != Gdiplus::Ok)
+			{
+				delete image;
+				return nullptr;
+			}
+			badges[index] = image;
+			return image;
+	}
+
+	// Standard GDI+ encoder lookup by MIME type (-1 when not found).
+	int GetEncoderClsid(const WCHAR* format, CLSID* clsid)
+	{
+		UINT num = 0, size = 0;
+		Gdiplus::GetImageEncodersSize(&num, &size);
+		if (!size)
+			return -1;
+		std::vector<BYTE> buffer(size);
+		Gdiplus::GetImageEncoders(num, size, (Gdiplus::ImageCodecInfo*)buffer.data());
+		for (UINT i = 0; i < num; i++)
+		{
+			const Gdiplus::ImageCodecInfo* encoder = (const Gdiplus::ImageCodecInfo*)buffer.data() + i;
+			if (wcscmp(encoder->MimeType, format) == 0)
+			{
+				*clsid = encoder->Clsid;
+				return (int)i;
+			}
+		}
+		return -1;
+	}
+
+	// Burns the ReviveNext badge into a just-downloaded art file: bottom
+	// left corner, 20 px padding from the image edges (scaled down only if
+	// the image is too small to fit it at native size). Only newly picked
+	// art is badged - existing files are never touched, re-picking is what
+	// (re-)applies it. WebP is left untouched: GDI+ has no webp encoder,
+	// so re-encoding would destroy the file.
+	void ApplyBadge(const std::string& path, ArtKind kind)
+	{
+		Gdiplus::Image* badge = GetBadge(kind);
+		if (!badge)
+			return;
+
+		const std::string ext = fs::path(path).extension().string();
+		const WCHAR* mime = nullptr;
+		bool jpeg = false;
+		if (_stricmp(ext.c_str(), ".png") == 0)
+			mime = L"image/png";
+		else if (_stricmp(ext.c_str(), ".jpg") == 0 || _stricmp(ext.c_str(), ".jpeg") == 0)
+		{
+				mime = L"image/jpeg";
+			jpeg = true;
+		}
+		else
+			return;
+
+		// Load through a memory stream: a Bitmap constructed from a file
+		// path keeps that file locked, which would block saving back over
+		// it below.
+		std::ifstream in(path, std::ios::binary);
+		std::vector<char> data((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+		if (data.empty())
+			return;
+		IStream* stream = nullptr;
+		if (CreateStreamOnHGlobal(nullptr, TRUE, &stream) != S_OK)
+			return;
+		ULONG written = 0;
+		stream->Write(data.data(), (ULONG)data.size(), &written);
+		LARGE_INTEGER zero = {};
+		stream->Seek(zero, STREAM_SEEK_SET, nullptr);
+
+		{
+			Gdiplus::Bitmap art(stream);
+			if (art.GetLastStatus() == Gdiplus::Ok)
+			{
+				const int artW = (int)art.GetWidth(), artH = (int)art.GetHeight();
+				int badgeW = (int)badge->GetWidth(), badgeH = (int)badge->GetHeight();
+				if (artW < badgeW + 40 || artH < badgeH + 40)
+				{
+					double scale = (std::min)((artW - 40.0) / badgeW, (artH - 40.0) / badgeH);
+					badgeW = (int)(badgeW * scale);
+					badgeH = (int)(badgeH * scale);
+				}
+				if (badgeW > 0 && badgeH > 0)
+				{
+					Gdiplus::Graphics graphics(&art);
+					graphics.SetInterpolationMode(Gdiplus::InterpolationModeHighQualityBicubic);
+					graphics.DrawImage(badge, 20, artH - 20 - badgeH, badgeW, badgeH);
+				}
+
+				CLSID clsid = {};
+				if (GetEncoderClsid(mime, &clsid) >= 0)
+				{
+					Gdiplus::EncoderParameters params = {};
+					ULONG quality = 90;
+					if (jpeg)
+					{
+						params.Count = 1;
+						params.Parameter[0].Guid = Gdiplus::EncoderQuality;
+						params.Parameter[0].Type = Gdiplus::EncoderParameterValueTypeLong;
+						params.Parameter[0].NumberOfValues = 1;
+						params.Parameter[0].Value = &quality;
+					}
+					art.Save(Utf8ToWide(path).c_str(), &clsid, jpeg ? &params : nullptr);
+				}
+			}
+		}
+		stream->Release();
 	}
 
 	HBITMAP DownloadAndScaleThumbnail(SteamGridDb& client, const std::string& url, int thumbW, int thumbH)
@@ -412,6 +565,8 @@ namespace
 
 		if (ok)
 		{
+			// Stamp the badge on before the preview below reloads the file.
+			ApplyBadge(stem + ext, kind);
 			// The SteamGridDB title is plain English and far cleaner than
 			// the raw canonicalName - use it as this shortcut's AppName
 			// from here on. Doesn't affect the art file just written,

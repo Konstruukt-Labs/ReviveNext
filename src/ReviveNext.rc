@@ -1,0 +1,5 @@
+#include "resource.h"
+
+// Embedded art badges - see src/resource.h.
+IDB_REVIVE_BADGE_PORTRAIT RCDATA "..\\Art\\revive-next-badge-white-96.png"
+IDB_REVIVE_BADGE_HOME RCDATA "..\\Art\\revive-next-badge-white-48.png"

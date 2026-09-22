@@ -18,6 +18,7 @@ add_executable(${APP_NAME} WIN32
     "src/GridArtSync.cpp"
     "src/ArtMatcherGui.cpp"
     "src/TitleOverrides.cpp"
+    "src/ReviveNext.rc"
 )
 
 target_compile_features(${APP_NAME} PUBLIC cxx_std_23)
