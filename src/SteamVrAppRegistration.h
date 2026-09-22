@@ -26,5 +26,14 @@ namespace SteamVrAppRegistration
 	// auto-start the whole SteamVR stack, too heavy for a desktop sync
 	// run, and registered entries persist in SteamVR's own application
 	// storage - syncing occasionally while SteamVR is up is enough.
-	void Sync(const std::vector<MetaGame>& games, const std::string& injectorPath, const std::string& artDir);
+	void Sync(const std::vector<MetaGame>& games, const std::string& injectorPath,
+		const std::string& artDir, bool quiet = false);
+
+	// Removes every application registered from this ReviveNext's
+	// revive.vrmanifest (all the games and the tool's own entry) from the
+	// running SteamVR, via RemoveApplicationManifest. Takes effect
+	// immediately - no SteamVR restart needed. For testing/resetting the
+	// registration (ReviveNext.exe /unregister); pops up explaining when
+	// SteamVR isn't running, since removal needs a live connection.
+	void Unregister(const std::string& injectorPath);
 }

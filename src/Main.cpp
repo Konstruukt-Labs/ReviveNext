@@ -4,6 +4,7 @@
 #include "TitleOverrides.h"
 
 #include <windows.h>
+#include <shlobj.h>
 #include <filesystem>
 #include <unordered_map>
 
@@ -39,7 +40,7 @@ namespace
 	// until it's restarted, same as any other environment variable change
 	// - worth a one-time popup since it's easy to miss otherwise and the
 	// symptom (controllers doing nothing in VR) isn't obviously related.
-	void EnsureActionManifestEnvVar(const std::string& runtimeDir)
+	void EnsureActionManifestEnvVar(const std::string& runtimeDir, bool quiet = false)
 	{
 		std::wstring manifestPath = std::filesystem::path(runtimeDir + "Input\\action_manifest.json").wstring();
 
@@ -59,10 +60,11 @@ namespace
 			DWORD_PTR result;
 			SendMessageTimeoutW(HWND_BROADCAST, WM_SETTINGCHANGE, 0, (LPARAM)L"Environment",
 				SMTO_ABORTIFHUNG, 5000, &result);
-			MessageBoxW(nullptr,
-				L"ReviveNext just configured a setting VR game controllers need.\n\n"
-				L"Restart Steam once for it to take effect.",
-				L"ReviveNext", MB_ICONINFORMATION);
+			if (!quiet)
+				MessageBoxW(nullptr,
+					L"ReviveNext just configured a setting VR game controllers need.\n\n"
+					L"Restart Steam once for it to take effect.",
+					L"ReviveNext", MB_ICONINFORMATION);
 		}
 
 		RegCloseKey(key);
@@ -143,7 +145,81 @@ namespace
 // registers each as a SteamVR application so they appear - and launch -
 // natively in SteamVR's own Library. Run this whenever the installed game
 // list might have changed.
-int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
+//
+// /autoregister is the headless mode SteamVR itself triggers: ReviveNext
+// registers its own application entry with those arguments and marks it
+// auto-launch, so SteamVR starts a copy of this exe (hidden, is_internal)
+// every time SteamVR itself starts. That copy rescans the games and
+// refreshes the registration without any UI, keeping SteamVR's Library
+// entries current with no resident process and nothing for the user to
+// remember. Interactive runs (no arguments) behave exactly as before.
+int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR cmdLine, int)
 {
+	if (cmdLine && wcsstr(cmdLine, L"/unregister"))
+	{
+		wchar_t selfPathW[MAX_PATH];
+		GetModuleFileNameW(nullptr, selfPathW, MAX_PATH);
+		int len = WideCharToMultiByte(CP_UTF8, 0, selfPathW, -1, nullptr, 0, nullptr, nullptr);
+		std::string selfPath(len - 1, '\0');
+		WideCharToMultiByte(CP_UTF8, 0, selfPathW, -1, selfPath.data(), len, nullptr, nullptr);
+		std::string selfDir = selfPath;
+		if (auto pos = selfDir.find_last_of("\\/"); pos != std::string::npos)
+			selfDir = selfDir.substr(0, pos + 1);
+
+		SteamVrAppRegistration::Unregister(selfDir + "ReviveInjector.exe");
+		return 0;
+	}
+
+	if (cmdLine && wcsstr(cmdLine, L"/autoregister"))
+	{
+		// Log to %LOCALAPPDATA%\ReviveNext\autoregister.log so the
+		// SteamVR-triggered runs (invisible by nature) leave a trace.
+		auto games = GameDiscovery::ScanGames();
+
+		auto titleOverrides = TitleOverrides::Load();
+		for (auto& game : games)
+			if (auto it = titleOverrides.find(game.canonicalName); it != titleOverrides.end())
+				game.title = it->second;
+
+		wchar_t selfPathW[MAX_PATH];
+		GetModuleFileNameW(nullptr, selfPathW, MAX_PATH);
+		int len = WideCharToMultiByte(CP_UTF8, 0, selfPathW, -1, nullptr, 0, nullptr, nullptr);
+		std::string selfPath(len - 1, '\0');
+		WideCharToMultiByte(CP_UTF8, 0, selfPathW, -1, selfPath.data(), len, nullptr, nullptr);
+
+		std::string selfDir = selfPath;
+		if (auto pos = selfDir.find_last_of("\\/"); pos != std::string::npos)
+			selfDir = selfDir.substr(0, pos + 1);
+
+		std::string logLine;
+		if (games.empty() || !std::filesystem::exists(selfDir + "ReviveInjector.exe"))
+		{
+			logLine = games.empty() ? "no games found" : "ReviveInjector.exe missing";
+		}
+		else
+		{
+			EnsureActionManifestEnvVar(selfDir, /*quiet=*/true);
+			SteamVrAppRegistration::Sync(games, selfDir + "ReviveInjector.exe", selfDir + "Art", /*quiet=*/true);
+			logLine = "registered " + std::to_string(games.size()) + " games";
+		}
+
+		if (wchar_t* localAppData = nullptr; SHGetKnownFolderPath(FOLDERID_LocalAppData, 0, nullptr, &localAppData) == S_OK)
+		{
+			std::filesystem::path logDir = std::filesystem::path(localAppData) / "ReviveNext";
+			std::error_code ec;
+			std::filesystem::create_directories(logDir, ec);
+			if (FILE* log = _wfopen((logDir / L"autoregister.log").c_str(), L"a"))
+			{
+				SYSTEMTIME st = {};
+			GetLocalTime(&st);
+				fprintf(log, "%04u-%02u-%02u %02u:%02u:%02u  %s\n",
+					st.wYear, st.wMonth, st.wDay, st.wHour, st.wMinute, st.wSecond, logLine.c_str());
+				fclose(log);
+			}
+			CoTaskMemFree(localAppData);
+		}
+		return 0;
+	}
+
 	return RunMain();
 }

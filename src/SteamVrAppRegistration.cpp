@@ -70,7 +70,7 @@ namespace
 }
 
 void SteamVrAppRegistration::Sync(const std::vector<MetaGame>& games, const std::string& injectorPath,
-	const std::string& artDir)
+	const std::string& artDir, bool quiet)
 {
 	if (games.empty())
 		return;
@@ -122,6 +122,24 @@ void SteamVrAppRegistration::Sync(const std::vector<MetaGame>& games, const std:
 		applications.push_back(std::move(entry));
 	}
 
+	// Register this tool itself as a dashboard-overlay application,
+	// hidden (is_internal), with /autoregister as its launch arguments,
+	// and marked auto-launch below: SteamVR then starts a headless copy
+	// of ReviveNext.exe every time SteamVR starts, which rescans the games
+	// and refreshes this registration - see wWinMain in Main.cpp.
+	// is_dashboard_overlay is what makes the entry eligible for
+	// auto-launch: SteamVR only auto-starts overlay-type applications
+	// (the same mechanism old Revive's always-running dashboard used).
+	applications.push_back({
+		{ "app_key", "revive.revenext" },
+		{ "launch_type", "binary" },
+		{ "binary_path_windows", (runtimeDir / "ReviveNext.exe").string() },
+		{ "arguments", "/autoregister" },
+		{ "is_dashboard_overlay", true },
+		{ "is_internal", true },
+		{ "strings", { { "en_us", { { "name", "ReviveNext" } } } } },
+	});
+
 	{
 		std::ofstream out(manifestPath, std::ios::binary | std::ios::trunc);
 		out << nlohmann::json({ { "applications", applications } }).dump(4);
@@ -139,10 +157,13 @@ void SteamVrAppRegistration::Sync(const std::vector<MetaGame>& games, const std:
 	// the desktop ends with SteamVR's entries stale until the next sync.
 	if (!IsSteamVrRunning())
 	{
-		MessageBoxA(nullptr,
-			"SteamVR isn't running, so its Library entries were not refreshed.\n"
-			"Run ReviveNext again with SteamVR open whenever games or art change.",
-			"ReviveNext", MB_ICONINFORMATION);
+		if (!quiet)
+		{
+			MessageBoxA(nullptr,
+				"SteamVR isn't running, so its Library entries were not refreshed.\n"
+				"Run ReviveNext again with SteamVR open whenever games or art change.",
+				"ReviveNext", MB_ICONINFORMATION);
+		}
 		return;
 	}
 
@@ -153,10 +174,54 @@ void SteamVrAppRegistration::Sync(const std::vector<MetaGame>& games, const std:
 
 	vr::EVRApplicationError appError =
 		vr::VRApplications()->AddApplicationManifest(manifestPath.string().c_str());
+	vr::VRApplications()->SetApplicationAutoLaunch("revive.revenext", true);
 	if (appError != vr::VRApplicationError_None)
 	{
 		ShowError(std::string("Registering games with SteamVR failed: ") +
 			vr::VRApplications()->GetApplicationsErrorNameFromEnum(appError));
+	}
+
+	vr::VR_Shutdown();
+}
+
+void SteamVrAppRegistration::Unregister(const std::string& injectorPath)
+{
+	if (!IsSteamVrRunning())
+	{
+		MessageBoxA(nullptr,
+			"SteamVR isn't running. Removal needs a live connection to it -\n"
+			"start SteamVR and run ReviveNext.exe /unregister again.",
+			"ReviveNext", MB_ICONINFORMATION);
+		return;
+	}
+
+	vr::EVRInitError initError = vr::VRInitError_Unknown;
+	vr::VR_Init(&initError, vr::VRApplication_Background);
+	if (initError != vr::VRInitError_None)
+	{
+		ShowError("Could not connect to SteamVR to remove the entries.");
+		return;
+	}
+
+	// Disable the tool's auto-launch before removing its entry, so a
+	// SteamVR restart can't immediately re-register everything via the
+	// /autoregister hook mid-test.
+	vr::VRApplications()->SetApplicationAutoLaunch("revive.revenext", false);
+
+	const fs::path manifestPath = fs::path(injectorPath).parent_path() / "revive.vrmanifest";
+	vr::EVRApplicationError appError =
+		vr::VRApplications()->RemoveApplicationManifest(manifestPath.string().c_str());
+	if (appError != vr::VRApplicationError_None)
+	{
+		ShowError(std::string("Removing the SteamVR entries failed: ") +
+			vr::VRApplications()->GetApplicationsErrorNameFromEnum(appError));
+	}
+	else
+	{
+		MessageBoxA(nullptr,
+			"ReviveNext's applications were removed from SteamVR.\n"
+			"The Other Apps list updates immediately.",
+			"ReviveNext", MB_ICONINFORMATION);
 	}
 
 	vr::VR_Shutdown();
