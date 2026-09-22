@@ -30,15 +30,15 @@ namespace
 {
 	// A caption row ("Meta Art" / "Library cover" / "Home art") sits just
 	// above each image box.
-	constexpr int kCaptionY = 48, kCaptionH = 20;
-	constexpr int kCoverX = 20, kCoverY = 72, kCoverW = 180, kCoverH = 180;
+	constexpr int kCaptionY = 128, kCaptionH = 20;
+	constexpr int kCoverX = 20, kCoverY = 152, kCoverW = 180, kCoverH = 180;
 	// Library cover preview matches its source aspect (600x900) exactly, so
 	// it never needs letterboxing. Home art (920x430) is much wider than
 	// tall - its box is sized to roughly the same aspect so it isn't
 	// distorted either. Both are shown side by side at all times so
 	// picking one never requires switching away from the other.
-	constexpr int kPortraitX = 220, kPortraitY = 72, kPortraitW = 140, kPortraitH = 210;
-	constexpr int kHomeX = 380, kHomeY = 72, kHomeW = 460, kHomeH = 215;
+	constexpr int kPortraitX = 220, kPortraitY = 152, kPortraitW = 140, kPortraitH = 210;
+	constexpr int kHomeX = 380, kHomeY = 152, kHomeW = 460, kHomeH = 215;
 
 	constexpr int kThumbPortraitW = 96, kThumbPortraitH = 144;
 	constexpr int kThumbHomeW = 160, kThumbHomeH = 75;
@@ -131,57 +131,64 @@ namespace
 			fs::remove(stem + ext, ec);
 	}
 
-	// The ReviveNext badges, loaded lazily from the exe's resources (see
-	// src/ReviveNext.rc): 96 px for the portrait Library cover, 48 px for
-	// the widescreen Home art. Null if unavailable - a missing badge just
-	// means unbadged art, never an error. First call happens from
-	// ApplyBadge, i.e. well after GdiplusStartup in Run().
+	// Loads a PNG from the exe's resources (see src/ReviveNext.rc).
+	// Null if unavailable - callers degrade to simply not drawing it.
+	Gdiplus::Image* LoadResourceImage(int id)
+	{
+		HRSRC res = FindResourceW(nullptr, MAKEINTRESOURCEW(id), MAKEINTRESOURCEW(10) /* RT_RCDATA */);
+		if (!res)
+			return nullptr;
+		HGLOBAL loaded = LoadResource(nullptr, res);
+		if (!loaded)
+			return nullptr;
+		void* data = LockResource(loaded);
+		DWORD size = SizeofResource(nullptr, res);
+		if (!data || !size)
+			return nullptr;
+
+		// Copy into a real HGLOBAL: resource memory is not a handle
+		// CreateStreamOnHGlobal can take ownership of.
+		HGLOBAL copy = GlobalAlloc(GMEM_MOVEABLE, size);
+		if (!copy)
+			return nullptr;
+		void* dst = GlobalLock(copy);
+		memcpy(dst, data, size);
+		GlobalUnlock(copy);
+
+		IStream* stream = nullptr;
+		if (CreateStreamOnHGlobal(copy, TRUE, &stream) != S_OK)
+		{
+			GlobalFree(copy);
+			return nullptr;
+		}
+		Gdiplus::Image* image = new Gdiplus::Image(stream);
+		stream->Release();
+		if (image->GetLastStatus() != Gdiplus::Ok)
+		{
+			delete image;
+			return nullptr;
+		}
+		return image;
+	}
+
+	// The ReviveNext badges (96 px for the portrait Library cover, 48 px
+	// for the widescreen Home art) and the window lockup, each loaded
+	// lazily once - first use is well after GdiplusStartup in Run().
 	Gdiplus::Image* GetBadge(ArtKind kind)
 	{
 		static Gdiplus::Image* badges[2] = {};
 		const int index = kind == ArtKind::Portrait ? 0 : 1;
-		if (badges[index])
-			return badges[index];
-
-		const int id = kind == ArtKind::Portrait ? IDB_REVIVE_BADGE_PORTRAIT : IDB_REVIVE_BADGE_HOME;
-		HRSRC res = FindResourceW(nullptr, MAKEINTRESOURCEW(id), MAKEINTRESOURCEW(10) /* RT_RCDATA */);
-			if (!res)
-				return nullptr;
-			HGLOBAL loaded = LoadResource(nullptr, res);
-			if (!loaded)
-				return nullptr;
-			void* data = LockResource(loaded);
-			DWORD size = SizeofResource(nullptr, res);
-			if (!data || !size)
-				return nullptr;
-
-			// Copy into a real HGLOBAL: resource memory is not a handle
-			// CreateStreamOnHGlobal can take ownership of.
-			HGLOBAL copy = GlobalAlloc(GMEM_MOVEABLE, size);
-			if (!copy)
-				return nullptr;
-			void* dst = GlobalLock(copy);
-			memcpy(dst, data, size);
-			GlobalUnlock(copy);
-
-			IStream* stream = nullptr;
-			if (CreateStreamOnHGlobal(copy, TRUE, &stream) != S_OK)
-			{
-				GlobalFree(copy);
-				return nullptr;
-			}
-			Gdiplus::Image* image = new Gdiplus::Image(stream);
-			stream->Release();
-			if (image->GetLastStatus() != Gdiplus::Ok)
-			{
-				delete image;
-				return nullptr;
-			}
-			badges[index] = image;
-			return image;
+		if (!badges[index])
+			badges[index] = LoadResourceImage(kind == ArtKind::Portrait ? IDB_REVIVE_BADGE_PORTRAIT : IDB_REVIVE_BADGE_HOME);
+		return badges[index];
 	}
 
-	// Standard GDI+ encoder lookup by MIME type (-1 when not found).
+	Gdiplus::Image* GetLogo()
+	{
+		static Gdiplus::Image* logo = LoadResourceImage(IDB_REVIVE_LOGO);
+		return logo;
+	}
+
 	int GetEncoderClsid(const WCHAR* format, CLSID* clsid)
 	{
 		UINT num = 0, size = 0;
@@ -698,6 +705,20 @@ namespace
 			HDC hdc = BeginPaint(hwnd, &ps);
 			Gdiplus::Graphics gr(hdc);
 
+			// The lockup sits in its own band at the top-left; every
+			// control below is laid out underneath it (see CreateControls).
+			if (Gdiplus::Image* logo = GetLogo())
+			{
+				// The lockup asset carries 30 px of empty space at its top and
+				// bottom, and 20 px at its left - draw only the content so the
+				// header band stays tight and the logo lines up with the left
+				// edge of the fields below (everything is laid out for that).
+				gr.DrawImage(logo,
+					Gdiplus::RectF(20.0f, 12.0f, (float)logo->GetWidth() - 20.0f, 100.0f),
+					20.0f, 30.0f, (float)logo->GetWidth() - 20.0f, 100.0f,
+					Gdiplus::UnitPixel);
+			}
+
 			// Contain-fit rather than stretch: Library cover (600x900) and
 			// Home art (920x430) have very different aspect ratios, so a
 			// fixed box for each would either distort the image or (since
@@ -773,52 +794,52 @@ namespace
 			kHomeX, kCaptionY, kHomeW, kCaptionH, hwnd, nullptr, nullptr, nullptr);
 
 		g.titleLabel = CreateWindowExW(0, L"STATIC", L"", WS_CHILD | WS_VISIBLE,
-			20, 304, 860, 24, hwnd, nullptr, nullptr, nullptr);
+			20, 384, 860, 24, hwnd, nullptr, nullptr, nullptr);
 		g.counterLabel = CreateWindowExW(0, L"STATIC", L"", WS_CHILD | WS_VISIBLE,
-			20, 330, 600, 20, hwnd, nullptr, nullptr, nullptr);
+			20, 410, 600, 20, hwnd, nullptr, nullptr, nullptr);
 
 		g.editSearch = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"", WS_CHILD | WS_VISIBLE | ES_AUTOHSCROLL,
-			20, 360, 600, 26, hwnd, (HMENU)(INT_PTR)kIdEditSearch, nullptr, nullptr);
+			20, 440, 600, 26, hwnd, (HMENU)(INT_PTR)kIdEditSearch, nullptr, nullptr);
 		g.btnSearch = CreateWindowExW(0, L"BUTTON", L"Search", WS_CHILD | WS_VISIBLE,
-			626, 360, 90, 26, hwnd, (HMENU)(INT_PTR)kIdBtnSearch, nullptr, nullptr);
+			626, 440, 90, 26, hwnd, (HMENU)(INT_PTR)kIdBtnSearch, nullptr, nullptr);
 
 		g.labelGridsPortrait = CreateWindowExW(0, L"STATIC", L"Library cover (600x900):", WS_CHILD,
-			20, 396, 410, 20, hwnd, nullptr, nullptr, nullptr);
+			20, 476, 410, 20, hwnd, nullptr, nullptr, nullptr);
 		g.labelGridsHome = CreateWindowExW(0, L"STATIC", L"Home art (920x430):", WS_CHILD,
-			450, 396, 410, 20, hwnd, nullptr, nullptr, nullptr);
+			450, 476, 410, 20, hwnd, nullptr, nullptr, nullptr);
 
 		g.listboxGames = CreateWindowExW(WS_EX_CLIENTEDGE, L"LISTBOX", L"",
 			WS_CHILD | WS_VISIBLE | WS_VSCROLL | LBS_NOTIFY,
-			20, 420, 860, 220, hwnd, (HMENU)(INT_PTR)kIdListboxGames, nullptr, nullptr);
+			20, 500, 860, 220, hwnd, (HMENU)(INT_PTR)kIdListboxGames, nullptr, nullptr);
 
 		// Side by side rather than the single listview this used to be -
 		// both kinds' candidates for the same searched game are available
 		// at once, so picking one never means losing the other's results.
 		g.listviewGridsPortrait = CreateWindowExW(WS_EX_CLIENTEDGE, WC_LISTVIEWW, L"",
 			WS_CHILD | LVS_ICON | LVS_SINGLESEL,
-			20, 420, 410, 220, hwnd, (HMENU)(INT_PTR)kIdListviewGridsPortrait, nullptr, nullptr);
+			20, 500, 410, 220, hwnd, (HMENU)(INT_PTR)kIdListviewGridsPortrait, nullptr, nullptr);
 		g.listviewGridsHome = CreateWindowExW(WS_EX_CLIENTEDGE, WC_LISTVIEWW, L"",
 			WS_CHILD | LVS_ICON | LVS_SINGLESEL,
-			450, 420, 410, 220, hwnd, (HMENU)(INT_PTR)kIdListviewGridsHome, nullptr, nullptr);
+			450, 500, 410, 220, hwnd, (HMENU)(INT_PTR)kIdListviewGridsHome, nullptr, nullptr);
 
 		g.btnBack = CreateWindowExW(0, L"BUTTON", L"< Back to search results", WS_CHILD | WS_VISIBLE,
-			20, 650, 200, 28, hwnd, (HMENU)(INT_PTR)kIdBtnBack, nullptr, nullptr);
+			20, 730, 200, 28, hwnd, (HMENU)(INT_PTR)kIdBtnBack, nullptr, nullptr);
 		// Prev lives here rather than up by the counter - the only other
 		// "move to another game" control is this row's Skip/Next button,
 		// so keeping both together reads as one pair instead of two
 		// separate, overlapping ways to advance.
 		g.btnPrev = CreateWindowExW(0, L"BUTTON", L"< Prev", WS_CHILD | WS_VISIBLE,
-			630, 650, 80, 28, hwnd, (HMENU)(INT_PTR)kIdBtnPrev, nullptr, nullptr);
+			630, 730, 80, 28, hwnd, (HMENU)(INT_PTR)kIdBtnPrev, nullptr, nullptr);
 		g.btnSkip = CreateWindowExW(0, L"BUTTON", L"Skip this game", WS_CHILD | WS_VISIBLE,
-			720, 650, 160, 28, hwnd, (HMENU)(INT_PTR)kIdBtnSkip, nullptr, nullptr);
+			720, 730, 160, 28, hwnd, (HMENU)(INT_PTR)kIdBtnSkip, nullptr, nullptr);
 
 		g.statusLabel = CreateWindowExW(0, L"STATIC", L"", WS_CHILD | WS_VISIBLE,
-			20, 686, 860, 24, hwnd, nullptr, nullptr, nullptr);
+			20, 766, 860, 24, hwnd, nullptr, nullptr, nullptr);
 
 		g.finalLabel = CreateWindowExW(0, L"STATIC", L"", WS_CHILD,
-			20, 420, 860, 220, hwnd, nullptr, nullptr, nullptr);
+			20, 500, 860, 220, hwnd, nullptr, nullptr, nullptr);
 		g.btnClose = CreateWindowExW(0, L"BUTTON", L"Close", WS_CHILD,
-			720, 650, 160, 28, hwnd, (HMENU)(INT_PTR)kIdBtnClose, nullptr, nullptr);
+			720, 730, 160, 28, hwnd, (HMENU)(INT_PTR)kIdBtnClose, nullptr, nullptr);
 
 		for (HWND h : { g.captionMeta, g.captionLibrary, g.captionHome, g.titleLabel, g.counterLabel,
 				g.editSearch, g.btnSearch, g.listboxGames,
@@ -872,7 +893,7 @@ std::vector<MetaGame> ArtMatcherGui::Run(const std::vector<MetaGame>& allGames,
 
 	g.hwnd = CreateWindowExW(0, wc.lpszClassName, L"ReviveNext - Manage Library",
 		WS_OVERLAPPEDWINDOW & ~WS_THICKFRAME & ~WS_MAXIMIZEBOX,
-		CW_USEDEFAULT, CW_USEDEFAULT, 900, 780, nullptr, nullptr, wc.hInstance, nullptr);
+		CW_USEDEFAULT, CW_USEDEFAULT, 900, 860, nullptr, nullptr, wc.hInstance, nullptr);
 
 	CreateControls(g.hwnd);
 	ShowWindow(g.hwnd, SW_SHOW);
