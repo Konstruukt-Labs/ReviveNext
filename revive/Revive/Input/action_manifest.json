@@ -109,6 +109,16 @@
       "type": "pose"
     },
     {
+      "name": "/actions/touch/out/VibrateLeft",
+      "requirement": "optional",
+      "type": "vibration"
+    },
+    {
+      "name": "/actions/touch/out/VibrateRight",
+      "requirement": "optional",
+      "type": "vibration"
+    },
+    {
       "name": "/actions/xbox/in/Button_A",
       "requirement": "optional",
       "type": "boolean"
@@ -287,6 +297,9 @@
       "/actions/touch/in/Touch_ThumbRest": "Thumbrest touch",
       "/actions/touch/in/Touch_IndexTrigger": "Trigger touch",
       "/actions/touch/in/Pose": "Pose",
+
+      "/actions/touch/out/VibrateLeft": "Vibration",
+      "/actions/touch/out/VibrateRight": "Vibration",
 
       "/actions/xbox/in/Button_A": "A",
       "/actions/xbox/in/Button_B": "B",

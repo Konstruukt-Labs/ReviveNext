@@ -278,6 +278,16 @@
           "mode": "joystick",
           "path": "/user/hand/right/input/joystick"
         }
+      ],
+      "haptics": [
+        {
+          "output": "/actions/touch/out/VibrateLeft",
+          "path": "/user/hand/left/output/haptic"
+        },
+        {
+          "output": "/actions/touch/out/VibrateRight",
+          "path": "/user/hand/right/output/haptic"
+        }
       ]
     }
   }

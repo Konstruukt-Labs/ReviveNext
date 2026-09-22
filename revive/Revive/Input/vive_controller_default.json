@@ -108,13 +108,19 @@
       "chords": [
         {
           "inputs": [
-            [ "/user/hand/left/input/trigger", "touch" ]
+            [
+              "/user/hand/left/input/trigger",
+              "touch"
+            ]
           ],
           "output": "/actions/touch/in/touch_indextrigger"
         },
         {
           "inputs": [
-            [ "/user/hand/right/input/trigger", "touch" ]
+            [
+              "/user/hand/right/input/trigger",
+              "touch"
+            ]
           ],
           "output": "/actions/touch/in/touch_indextrigger"
         }
@@ -291,6 +297,16 @@
           },
           "mode": "button",
           "path": "/user/hand/right/input/application_menu"
+        }
+      ],
+      "haptics": [
+        {
+          "output": "/actions/touch/out/VibrateLeft",
+          "path": "/user/hand/left/output/haptic"
+        },
+        {
+          "output": "/actions/touch/out/VibrateRight",
+          "path": "/user/hand/right/output/haptic"
         }
       ]
     }

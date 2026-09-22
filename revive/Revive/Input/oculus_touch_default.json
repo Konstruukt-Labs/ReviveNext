@@ -4,7 +4,7 @@
   "description": "",
   "name": "Revive for Oculus Touch",
   "bindings": {
-      "/actions/touch": {
+    "/actions/touch": {
       "chords": [
         {
           "output": "/actions/touch/in/button_enter",
@@ -150,6 +150,16 @@
           },
           "mode": "trigger",
           "path": "/user/hand/right/input/trigger"
+        }
+      ],
+      "haptics": [
+        {
+          "output": "/actions/touch/out/VibrateLeft",
+          "path": "/user/hand/left/output/haptic"
+        },
+        {
+          "output": "/actions/touch/out/VibrateRight",
+          "path": "/user/hand/right/output/haptic"
         }
       ]
     }

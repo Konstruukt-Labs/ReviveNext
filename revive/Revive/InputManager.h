@@ -104,6 +104,8 @@ public:
 		vr::VRActionHandle_t m_Button_IndexTrigger;
 		vr::VRActionHandle_t m_Button_HandTrigger;
 
+		vr::VRActionHandle_t m_Vibration;
+
 		HapticsBuffer m_Haptics;
 		std::atomic_bool m_bHapticsRunning;
 

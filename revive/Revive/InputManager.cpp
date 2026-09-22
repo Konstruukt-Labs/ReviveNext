@@ -387,8 +387,23 @@ void InputManager::OculusTouch::HapticsThread(OculusTouch* device)
 		float sample = (device->m_Haptics.GetSample() + device->m_Haptics.GetSample()) / 2.0f;
 		if (sample > 0.0f)
 		{
-			vr::TrackedDeviceIndex_t touch = vr::VRSystem()->GetTrackedDeviceIndexForControllerRole(device->Role);
-			vr::VRSystem()->TriggerHapticPulse(touch, 0, (uint16_t)(freq.count() * sample));
+			// The legacy device-level TriggerHapticPulse is silently dropped
+			// when called from a scene application on several modern stacks
+			// (confirmed on Steam Link / Quest 3: the identical call works
+			// from non-scene apps, never from a visible scene app). Vibration
+			// actions are not subject to that, but a single long call gets
+			// truncated to a blip - re-apply a short burst every tick instead,
+			// with the sample as the amplitude. The legacy pulse stays as a
+			// fallback for manifest-less setups where the action handle is
+			// invalid (TriggerHapticVibrationAction then fails immediately).
+			vr::EVRInputError err = vr::VRInput()->TriggerHapticVibrationAction(
+				device->m_Vibration, 0.0f, 0.01f,
+				(float)REV_HAPTICS_SAMPLE_RATE, sample, device->Handle);
+			if (err != vr::VRInputError_None)
+			{
+				vr::TrackedDeviceIndex_t touch = vr::VRSystem()->GetTrackedDeviceIndexForControllerRole(device->Role);
+				vr::VRSystem()->TriggerHapticPulse(touch, 0, (uint16_t)(freq.count() * sample));
+			}
 		}
 
 		std::this_thread::sleep_for(freq);
@@ -426,6 +441,12 @@ InputManager::OculusTouch::OculusTouch(vr::VRActionSetHandle_t actionSet, vr::ET
 	GET_TOUCH_ACTION(Button_HandTrigger);
 
 #undef GET_HANDED_ACTION
+
+	// Haptic output action for this hand - see HapticsThread for why
+	// vibration goes through an action rather than TriggerHapticPulse.
+	vr::VRInput()->GetActionHandle(
+		role == vr::TrackedControllerRole_RightHand ? "/actions/touch/out/VibrateRight" : "/actions/touch/out/VibrateLeft",
+		&m_Vibration);
 
 	m_HapticsThread = std::thread(HapticsThread, this);
 }
