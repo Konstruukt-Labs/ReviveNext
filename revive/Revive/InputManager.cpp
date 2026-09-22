@@ -279,20 +279,33 @@ void InputManager::GetTrackingState(ovrSession session, ovrTrackingState* outSta
 			continue;
 		}
 
-		// Apply a 45-degree offset to better fit the Oculus Touch pose
+		// Apply a 45-degree offset to better fit the Oculus Touch pose -
+		// a fixed rotation with no runtime dependency, so compute it once
+		// (including the sin/cos RotationX does internally) rather than
+		// on every call, for both hands, every frame.
+		static const vr::HmdMatrix34_t offset = REV::Matrix4f(OVR::Matrix4f::RotationX(-MATH_FLOAT_PIOVER4));
 		vr::TrackedDevicePose_t pose;
-		vr::HmdMatrix34_t offset = REV::Matrix4f(OVR::Matrix4f::RotationX(-MATH_FLOAT_PIOVER4));
 		vr::VRSystem()->ApplyTransform(&pose, &poses[hands[i]], &offset);
 
 		outState->HandPoses[i] = TrackedDevicePoseToOVRPose(pose, m_LastHandPose[i], absTime);
 		outState->HandStatusFlags[i] = TrackedDevicePoseToOVRStatusFlags(pose);
 	}
 
-	REV::Matrix4f calibratedOrigin = REV::Matrix4f(vr::VRSystem()->GetRawZeroPoseToStandingAbsoluteTrackingPose());
-	if (origin == vr::TrackingUniverseSeated)
-		calibratedOrigin *= REV::Matrix4f(vr::VRSystem()->GetSeatedZeroPoseToStandingAbsoluteTrackingPose()).Inverted();
-	outState->CalibratedOrigin.Orientation = OVR::Quatf(calibratedOrigin);
-	outState->CalibratedOrigin.Position = calibratedOrigin.GetTranslation();
+	// Only changes on a recenter (InvalidateCalibratedOrigin(), called
+	// from Session.cpp's event poll) or a tracking-origin-mode switch -
+	// caching it avoids two OpenVR IPC calls and a 4x4 matrix inversion
+	// on every single call to this hot per-frame API.
+	if (m_CalibratedOriginDirty || origin != m_CalibratedOriginMode)
+	{
+		REV::Matrix4f calibratedOrigin = REV::Matrix4f(vr::VRSystem()->GetRawZeroPoseToStandingAbsoluteTrackingPose());
+		if (origin == vr::TrackingUniverseSeated)
+			calibratedOrigin *= REV::Matrix4f(vr::VRSystem()->GetSeatedZeroPoseToStandingAbsoluteTrackingPose()).Inverted();
+		m_CachedCalibratedOrigin.Orientation = OVR::Quatf(calibratedOrigin);
+		m_CachedCalibratedOrigin.Position = calibratedOrigin.GetTranslation();
+		m_CalibratedOriginMode = origin;
+		m_CalibratedOriginDirty = false;
+	}
+	outState->CalibratedOrigin = m_CachedCalibratedOrigin;
 }
 
 ovrResult InputManager::GetDevicePoses(ovrSession session, ovrTrackedDeviceType* deviceTypes, int deviceCount, double absTime, ovrPoseStatef* outDevicePoses)

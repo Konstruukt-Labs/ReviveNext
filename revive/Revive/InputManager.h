@@ -182,6 +182,12 @@ public:
 	void GetTrackingState(ovrSession session, ovrTrackingState* outState, double absTime);
 	ovrResult GetDevicePoses(ovrSession session, ovrTrackedDeviceType* deviceTypes, int deviceCount, double absTime, ovrPoseStatef* outDevicePoses);
 
+	// Called from Session.cpp's event poll on a recenter (seated or
+	// standing zero-pose reset) - see GetTrackingState's calibrated-origin
+	// caching for why this needs to be pushed in from the outside rather
+	// than detected here.
+	void InvalidateCalibratedOrigin() { m_CalibratedOriginDirty = true; }
+
 protected:
 	std::vector<InputDevice*> m_InputDevices;
 
@@ -190,6 +196,12 @@ private:
 	ovrPoseStatef m_LastPoses[vr::k_unMaxTrackedDeviceCount];
 	ovrPoseStatef m_LastHandPose[ovrHand_Count];
 	std::vector<vr::VRActiveActionSet_t> m_ActiveActionSets;
+
+	// GetTrackingState's calibrated-origin cache - only changes on a
+	// recenter or a tracking-origin-mode switch, not every call.
+	bool m_CalibratedOriginDirty = true;
+	vr::ETrackingUniverseOrigin m_CalibratedOriginMode = vr::TrackingUniverseStanding;
+	ovrPosef m_CachedCalibratedOrigin = {};
 
 	ovrResult InputErrorToOvrError(vr::EVRInputError error);
 	unsigned int TrackedDevicePoseToOVRStatusFlags(vr::TrackedDevicePose_t pose);

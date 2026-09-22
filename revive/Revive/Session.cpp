@@ -149,6 +149,12 @@ void ovrHmdStruct::UpdateStatus()
 			Status.OverlayPresent = vr::VROverlay()->IsDashboardVisible();
 		}
 		break;
+		case vr::VREvent_SeatedZeroPoseReset:
+		case vr::VREvent_StandingZeroPoseReset:
+		{
+			Input->InvalidateCalibratedOrigin();
+		}
+		break;
 		}
 
 #ifdef DEBUG
