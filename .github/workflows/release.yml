@@ -12,21 +12,36 @@ permissions:
 
 jobs:
   release:
-    runs-on: windows-latest
+    runs-on: windows-2022  # not windows-latest: the VS 2026 image drops
+                           # ATL (revive needs atlbase.h) and its v145
+                           # toolset mismatches vcpkg-built libs (see the
+                           # v143 bump in the revive vcxprojs)
     steps:
       - uses: actions/checkout@v4
         with:
-          submodules: recursive
+          # Submodules fetched blob-filtered below - the pinned commits only
+          # need headers/libs (~13MB of openvr's ~500MB working tree), and a
+          # full recursive clone would pull all 403MB of unused samples/
+          # (slow to materialize on Windows runners' filesystems, too).
+          submodules: false
+
+      # Blob-filtered fetch downloads each submodule's commits/trees plus
+      # only the blobs the checkout materializes - ~97% less than a full
+      # clone, while still landing exactly the pinned SHA (unlike --depth 1,
+      # which would miss the openvr pin sitting one commit past the
+      # v1.23.7 tag).
+      - name: Submodules (blob-filtered)
+        shell: pwsh
+        run: git submodule update --init --recursive --filter=blob:none
 
       # The revive solution resolves detours/openxr-loader through vcpkg's
-      # MSBuild integration (same as upstream Revive's CI did). The static
-      # openxr loader needs the small port patch carried in this repo; skip
-      # gracefully if upstream vcpkg already fixed it.
+      # MSBuild integration (same as upstream Revive's CI did). The static-CRT
+      # fix this repo used to carry as a port patch was upstreamed into vcpkg
+      # (ports/openxr-loader/msvc-crt.diff + portfile rewrite), so the runner's
+      # bundled vcpkg needs no patching.
       - name: vcpkg integration and dependencies
         shell: pwsh
         run: |
-          git -C C:\vcpkg apply $env:GITHUB_WORKSPACE\fix-vcpkg-openxr-static-loader.patch
-          if ($LASTEXITCODE -ne 0) { Write-Host 'patch not applied - may already be upstreamed' }
           vcpkg integrate install
           vcpkg install --triplet x64-windows-static detours openxr-loader
 
@@ -38,14 +53,25 @@ jobs:
           Invoke-WebRequest -Uri 'https://securecdn.oculus.com/binaries/download/?id=4377593722298679' -OutFile LibOVR.zip
           Expand-Archive LibOVR.zip -DestinationPath revive\Externals
 
+      # NSIS isn't on every runner image (gone from the newer VS 2026
+      # windows-latest) - install it explicitly. choco puts makensis in
+      # C:\Program Files (x86)\NSIS, which CMakeLists.txt already checks,
+      # and GITHUB_PATH covers PATH-based lookups in later steps.
+      - name: NSIS
+        shell: pwsh
+        run: |
+          choco install nsis -y --no-progress
+          Add-Content $env:GITHUB_PATH 'C:\Program Files (x86)\NSIS'
+
       # Builds ReviveNext.exe + Resources via MSBuild, then the NSIS
-      # installer target produces build/ReviveNext-Setup.exe (NSIS ships
-      # on the runner image).
+      # installer target produces build/ReviveNext-Setup.exe (NSIS is
+      # installed in the step above). Configure and build are chained with
+      # && so a configure failure stops the step instead of cascading into
+      # a confusing MSB1009 from the build invocation.
       - name: Build installer
         shell: pwsh
         run: |
-          cmake -B build -S .
-          cmake --build build --config Release --target installer
+          cmake -B build -S . && cmake --build build --config Release --target installer
 
       - name: Create release
         shell: pwsh

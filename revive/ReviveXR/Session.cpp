@@ -11,6 +11,7 @@
 #include <openxr/openxr.h>
 #include <openxr/openxr_platform.h>
 #include <wrl/client.h>
+#include <chrono>
 #include <thread>
 
 using namespace std::chrono_literals;
