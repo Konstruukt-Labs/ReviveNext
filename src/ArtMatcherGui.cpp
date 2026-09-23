@@ -52,6 +52,7 @@ namespace
 	constexpr int kIdBtnSkip = 107;
 	constexpr int kIdBtnClose = 108;
 	constexpr int kIdBtnSettings = 109;
+	constexpr int kIdBtnHelp = 113;
 	constexpr int kIdBtnPrev = 110;
 	constexpr int kIdLinkBuyCoffee = 111;
 	constexpr int kIdLinkSponsor = 112;
@@ -363,6 +364,7 @@ namespace
 		HWND labelGridsPortrait = nullptr, labelGridsHome = nullptr;
 		HWND btnBack = nullptr, btnSkip = nullptr, titleLabel = nullptr, counterLabel = nullptr, statusLabel = nullptr;
 		HWND finalLabel = nullptr, btnClose = nullptr, btnSettings = nullptr;
+		HWND btnHelp = nullptr;
 		HWND linkBuyCoffee = nullptr, linkSponsor = nullptr;
 		HWND btnPrev = nullptr;
 		HWND captionMeta = nullptr, captionLibrary = nullptr, captionHome = nullptr;
@@ -727,6 +729,18 @@ namespace
 				EnableWindow(hwnd, TRUE);
 				SetForegroundWindow(hwnd);
 			}
+			else if (LOWORD(wParam) == kIdBtnHelp && HIWORD(wParam) == BN_CLICKED)
+			{
+				MessageBoxW(hwnd,
+					L"Registration happens when this window closes - launch ReviveNext whenever you like, as long as SteamVR is running by the time you close it.\n\n"
+					L"Making your games show up in SteamVR's Library (Other Apps tab):\n\n"
+					L"1. Have SteamVR running (start it if it is not).\n"
+					L"2. Close this window when you are done - that registers your games and arms the automatic refresh.\n"
+					L"3. The games appear under Other Apps. If the list does not refresh right away, restart SteamVR once.\n\n"
+					L"From then on it is fully automatic: every SteamVR start refreshes the list, and newly installed games appear on their own.\n\n"
+					L"(Cover art matching is optional - enter a free SteamGridDB API key via the Settings button in the application window.)",
+					L"ReviveNext - Help", MB_ICONINFORMATION);
+			}
 			else if (LOWORD(wParam) == kIdListboxGames && HIWORD(wParam) == LBN_DBLCLK)
 			{
 				int sel = (int)SendMessageW(g.listboxGames, LB_GETCURSEL, 0, 0);
@@ -846,6 +860,8 @@ namespace
 		// font to render at all.
 		g.btnSettings = CreateWindowExW(0, L"BUTTON", L"Settings...", WS_CHILD | WS_VISIBLE,
 			760, 86, 120, 26, hwnd, (HMENU)(INT_PTR)kIdBtnSettings, nullptr, nullptr);
+		g.btnHelp = CreateWindowExW(0, L"BUTTON", L"Help", WS_CHILD | WS_VISIBLE,
+			690, 86, 60, 26, hwnd, (HMENU)(INT_PTR)kIdBtnHelp, nullptr, nullptr);
 
 		HFONT emojiFont = CreateFontW(-18, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
 			DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
@@ -933,7 +949,7 @@ namespace
 				g.editSearch, g.btnSearch, g.listboxGames,
 				g.listviewGridsPortrait, g.listviewGridsHome, g.labelGridsPortrait, g.labelGridsHome,
 				g.btnBack, g.btnSkip, g.btnPrev,
-				g.statusLabel, g.finalLabel, g.btnClose, g.btnSettings })
+				g.statusLabel, g.finalLabel, g.btnClose, g.btnSettings, g.btnHelp })
 			setFont(h);
 	}
 }
