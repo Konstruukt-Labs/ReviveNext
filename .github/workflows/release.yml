@@ -1,0 +1,58 @@
+name: Release
+
+# Build the installer and publish a GitHub release on every push (commit
+# or merge) to main. Also runnable manually from the Actions tab.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      # The revive solution resolves detours/openxr-loader through vcpkg's
+      # MSBuild integration (same as upstream Revive's CI did). The static
+      # openxr loader needs the small port patch carried in this repo; skip
+      # gracefully if upstream vcpkg already fixed it.
+      - name: vcpkg integration and dependencies
+        shell: pwsh
+        run: |
+          git -C C:\vcpkg apply $env:GITHUB_WORKSPACE\fix-vcpkg-openxr-static-loader.patch
+          if ($LASTEXITCODE -ne 0) { Write-Host 'patch not applied - may already be upstreamed' }
+          vcpkg integrate install
+          vcpkg install --triplet x64-windows-static detours openxr-loader
+
+      # LibOVR can't be committed (Meta's license); fetch the same public
+      # SDK zip upstream Revive's CI used and unpack it into revive/Externals.
+      - name: Oculus SDK (LibOVR)
+        shell: pwsh
+        run: |
+          Invoke-WebRequest -Uri 'https://securecdn.oculus.com/binaries/download/?id=4377593722298679' -OutFile LibOVR.zip
+          Expand-Archive LibOVR.zip -DestinationPath revive\Externals
+
+      # Builds ReviveNext.exe + Resources via MSBuild, then the NSIS
+      # installer target produces build/ReviveNext-Setup.exe (NSIS ships
+      # on the runner image).
+      - name: Build installer
+        shell: pwsh
+        run: |
+          cmake -B build -S .
+          cmake --build build --config Release --target installer
+
+      - name: Create release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = "build-$env:GITHUB_RUN_NUMBER"
+          gh release create $tag build/ReviveNext-Setup.exe `
+            --title "ReviveNext build #$env:GITHUB_RUN_NUMBER" `
+            --generate-notes --latest
