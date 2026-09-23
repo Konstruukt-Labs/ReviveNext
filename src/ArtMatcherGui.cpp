@@ -53,6 +53,8 @@ namespace
 	constexpr int kIdBtnClose = 108;
 	constexpr int kIdBtnSettings = 109;
 	constexpr int kIdBtnPrev = 110;
+	constexpr int kIdLinkBuyCoffee = 111;
+	constexpr int kIdLinkSponsor = 112;
 
 	enum class Mode { PickingGame, PickingGrid };
 
@@ -361,6 +363,7 @@ namespace
 		HWND labelGridsPortrait = nullptr, labelGridsHome = nullptr;
 		HWND btnBack = nullptr, btnSkip = nullptr, titleLabel = nullptr, counterLabel = nullptr, statusLabel = nullptr;
 		HWND finalLabel = nullptr, btnClose = nullptr, btnSettings = nullptr;
+		HWND linkBuyCoffee = nullptr, linkSponsor = nullptr;
 		HWND btnPrev = nullptr;
 		HWND captionMeta = nullptr, captionLibrary = nullptr, captionHome = nullptr;
 
@@ -731,10 +734,25 @@ namespace
 			}
 			return 0;
 
+		case WM_CTLCOLORSTATIC:
+			// The support links paint on an explicitly white background.
+			if ((HWND)lParam == g.linkBuyCoffee || (HWND)lParam == g.linkSponsor)
+			{
+				SetBkColor((HDC)wParam, RGB(255, 255, 255));
+				return (INT_PTR)GetStockObject(WHITE_BRUSH);
+			}
+			break;
+
 		case WM_NOTIFY:
 		{
 			LPNMHDR hdr = (LPNMHDR)lParam;
-			if (hdr->code == NM_DBLCLK && (hdr->idFrom == kIdListviewGridsPortrait || hdr->idFrom == kIdListviewGridsHome))
+			if (hdr->code == NM_CLICK && (hdr->idFrom == kIdLinkBuyCoffee || hdr->idFrom == kIdLinkSponsor))
+			{
+				// Support links (SysLink) - open in the default browser.
+				auto* link = (PNMLINK)lParam;
+				ShellExecuteW(hwnd, L"open", link->item.szUrl, nullptr, nullptr, SW_SHOWNORMAL);
+			}
+			else if (hdr->code == NM_DBLCLK && (hdr->idFrom == kIdListviewGridsPortrait || hdr->idFrom == kIdListviewGridsHome))
 			{
 				auto* activate = (LPNMITEMACTIVATE)lParam;
 				if (activate->iItem >= 0)
@@ -822,8 +840,34 @@ namespace
 		HFONT font = (HFONT)GetStockObject(DEFAULT_GUI_FONT);
 		auto setFont = [&](HWND h) { SendMessageW(h, WM_SETFONT, (WPARAM)font, TRUE); };
 
+		// The Settings button sits on the lockup's baseline (the logo's
+		// content spans y 12-112); the support links occupy the band above
+		// it where the button used to be. Emoji glyphs need an emoji-capable
+		// font to render at all.
 		g.btnSettings = CreateWindowExW(0, L"BUTTON", L"Settings...", WS_CHILD | WS_VISIBLE,
-			760, 16, 120, 26, hwnd, (HMENU)(INT_PTR)kIdBtnSettings, nullptr, nullptr);
+			760, 86, 120, 26, hwnd, (HMENU)(INT_PTR)kIdBtnSettings, nullptr, nullptr);
+
+		HFONT emojiFont = CreateFontW(-18, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
+			DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
+			DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI Emoji");
+		g.linkBuyCoffee = CreateWindowExW(0, WC_LINK,
+			L"<a href=\"https://buymeacoffee.com/itsvrk\">Buy me a coffee \u2615</a>",
+			WS_CHILD | WS_VISIBLE, 660, 18, 220, 24, hwnd, (HMENU)(INT_PTR)kIdLinkBuyCoffee, nullptr, nullptr);
+		g.linkSponsor = CreateWindowExW(0, WC_LINK,
+			L"<a href=\"https://github.com/sponsors/BrianGilbert\">Sponsor on GitHub \u2764</a>",
+			WS_CHILD | WS_VISIBLE, 660, 46, 220, 24, hwnd, (HMENU)(INT_PTR)kIdLinkSponsor, nullptr, nullptr);
+		for (HWND h : { g.linkBuyCoffee, g.linkSponsor })
+		{
+			SendMessageW(h, WM_SETFONT, (WPARAM)emojiFont, TRUE);
+
+			// Size each link to its text and right-align it to the window's
+			// right margin - SysLink has no text alignment of its own, so a
+			// snug rect is what makes it read as right-aligned.
+			SIZE ideal = {};
+			SendMessageW(h, LM_GETIDEALSIZE, 0, (LPARAM)&ideal);
+			int y = h == g.linkBuyCoffee ? 18 : 46;
+			MoveWindow(h, 880 - ideal.cx, y, ideal.cx, ideal.cy + 2, TRUE);
+		}
 
 		// Captions + cover art, Library cover preview, and Home art preview
 		// all sit in a row above (images drawn in WM_PAINT); everything
@@ -932,6 +976,7 @@ std::vector<MetaGame> ArtMatcherGui::Run(const std::vector<MetaGame>& allGames,
 	wc.hInstance = GetModuleHandleW(nullptr);
 	wc.lpszClassName = L"ReviveNextArtMatcher";
 	wc.hCursor = LoadCursor(nullptr, IDC_ARROW);
+	wc.hIcon = LoadIconW(GetModuleHandleW(nullptr), MAKEINTRESOURCEW(IDI_APP));
 	wc.hbrBackground = (HBRUSH)(COLOR_WINDOW + 1);
 	RegisterClassW(&wc);
 
@@ -1067,6 +1112,7 @@ std::optional<std::string> ArtMatcherGui::PromptForApiKey()
 	wc.hInstance = GetModuleHandleW(nullptr);
 	wc.lpszClassName = L"ReviveNextApiKeyPrompt";
 	wc.hCursor = LoadCursor(nullptr, IDC_ARROW);
+	wc.hIcon = LoadIconW(GetModuleHandleW(nullptr), MAKEINTRESOURCEW(IDI_APP));
 	wc.hbrBackground = (HBRUSH)(COLOR_WINDOW + 1);
 	RegisterClassW(&wc);
 

@@ -8,3 +8,8 @@
 
 // ReviveNext lockup shown at the top-left of the art review window.
 #define IDB_REVIVE_LOGO 103
+
+// Application icon (Art/revive-next.ico, built from the revive-next-mark
+// PNGs). ID 1 on purpose: the first icon resource is what Explorer shows
+// for the exe file itself.
+#define IDI_APP 1
