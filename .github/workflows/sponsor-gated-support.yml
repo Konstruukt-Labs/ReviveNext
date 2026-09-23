@@ -1,0 +1,36 @@
+name: "Sponsor Gated Support"
+
+run-name: "Analyzing support issue"
+
+# Gates issues carrying the "support" label (and their comments) to
+# sponsors, contributors, and anyone listed in SPONSOR_EXEMPT. Non-sponsors
+# get a polite close + lock; bug reports and feature requests stay open to
+# everyone. Requires a classic PAT with read access to sponsor data, stored
+# as the repository secret PERSONAL_ACCESS_TOKEN (see
+# https://mrjackyliang.github.io/sponsor-gated-support/ for setup).
+on:
+  issue_comment:
+    types:
+      - "created"
+      - "edited"
+  issues:
+    types:
+      - "opened"
+      - "closed"
+
+permissions:
+  issues: "write"
+
+jobs:
+  check-issues:
+    runs-on: "ubuntu-latest"
+    steps:
+      - name: "Checkout repository"
+        uses: "actions/checkout@v4"
+      - name: "Check support issues"
+        # v2, pinned by commit SHA so a swapped tag can't introduce
+        # different code than what was reviewed.
+        uses: "mrjackyliang/sponsor-gated-support@47f1126722801d8e71fa2d94226e45cb6d43719b"
+        with:
+          GITHUB_PERSONAL_ACCESS_TOKEN: "${{ secrets.PERSONAL_ACCESS_TOKEN }}"
+          GITHUB_WORKFLOW_TOKEN: "${{ secrets.GITHUB_TOKEN }}"
