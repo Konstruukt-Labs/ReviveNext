@@ -1,5 +1,7 @@
 #include "SteamVrAppRegistration.h"
 
+#include "AppData.h"
+
 #include <windows.h>
 #include <TlHelp32.h>
 
@@ -75,9 +77,14 @@ void SteamVrAppRegistration::Sync(const std::vector<MetaGame>& games, const std:
 	if (games.empty())
 		return;
 
-	const fs::path runtimeDir = fs::path(injectorPath).parent_path();
-	const fs::path manifestPath = runtimeDir / "revive.vrmanifest";
-	const fs::path actionManifestPath = runtimeDir / "Input" / "action_manifest.json";
+	// The action manifest is read-only payload and lives with the
+	// injector under Resources/; the registration manifest itself is
+	// rewritten on every sync, so it lives in per-user AppData storage
+	// (installed copies sit in Program Files, which is not writable
+	// without elevation).
+	const fs::path actionManifestPath =
+		fs::path(injectorPath).parent_path() / "Input" / "action_manifest.json";
+	const fs::path manifestPath = (fs::path(*AppData::SubDir("")) / "revive.vrmanifest").make_preferred();
 
 	nlohmann::json applications = nlohmann::json::array();
 	for (const MetaGame& game : games)
@@ -133,7 +140,7 @@ void SteamVrAppRegistration::Sync(const std::vector<MetaGame>& games, const std:
 	applications.push_back({
 		{ "app_key", "revive.revenext" },
 		{ "launch_type", "binary" },
-		{ "binary_path_windows", (runtimeDir / "ReviveNext.exe").string() },
+		{ "binary_path_windows", (fs::path(injectorPath).parent_path().parent_path() / "ReviveNext.exe").string() },
 		{ "arguments", "/autoregister" },
 		{ "is_dashboard_overlay", true },
 		{ "is_internal", true },
@@ -208,7 +215,8 @@ void SteamVrAppRegistration::Unregister(const std::string& injectorPath)
 	// /autoregister hook mid-test.
 	vr::VRApplications()->SetApplicationAutoLaunch("revive.revenext", false);
 
-	const fs::path manifestPath = fs::path(injectorPath).parent_path() / "revive.vrmanifest";
+	// Match Sync: the manifest lives in AppData storage.
+	const fs::path manifestPath = (fs::path(*AppData::SubDir("")) / "revive.vrmanifest").make_preferred();
 	vr::EVRApplicationError appError =
 		vr::VRApplications()->RemoveApplicationManifest(manifestPath.string().c_str());
 	if (appError != vr::VRApplicationError_None)

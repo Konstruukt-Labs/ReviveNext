@@ -136,7 +136,28 @@ namespace
 			}
 		}
 	}
+
+	// One-time carry-over from the pre-Resources layouts: art used to live
+	// beside the exe (and briefly beside the injector under Resources), so
+	// picks made before the relocation survive the move into AppData
+	// storage. Only fills gaps - never overwrites.
+	void MigrateOldArtDir(const fs::path& from, const fs::path& artDir)
+	{
+		std::error_code ec;
+		if (!fs::exists(from, ec))
+			return;
+		for (const auto& entry : fs::directory_iterator(from, ec))
+		{
+			if (!entry.is_regular_file(ec))
+				continue;
+			const fs::path dst = artDir / entry.path().filename();
+			if (!fs::exists(dst, ec))
+				fs::copy_file(entry.path(), dst, ec);
+		}
+	}
 }
+
+
 
 std::vector<MetaGame> GridArtSync::Run(const std::vector<MetaGame>& games,
 	const std::string& injectorPath, const std::string& artDir)
@@ -146,6 +167,14 @@ std::vector<MetaGame> GridArtSync::Run(const std::vector<MetaGame>& games,
 
 	std::error_code ec;
 	fs::create_directories(artDir, ec);
+
+	// Relocation carry-over first (older layouts), then the Steam-grid
+	// one below.
+	{
+		const fs::path resourcesDir = fs::path(injectorPath).parent_path();
+		MigrateOldArtDir(resourcesDir / "Art", artDir);
+		MigrateOldArtDir(resourcesDir.parent_path() / "Art", artDir);
+	}
 
 	// One-time carry-over of art matched under the old Steam-shortcut
 	// naming, so picks made before the Steam Library integration was

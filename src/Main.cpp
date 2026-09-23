@@ -1,3 +1,4 @@
+#include "AppData.h"
 #include "GameDiscovery.h"
 #include "GridArtSync.h"
 #include "SteamVrAppRegistration.h"
@@ -108,20 +109,30 @@ namespace
 		if (auto pos = selfDir.find_last_of("\\/"); pos != std::string::npos)
 			selfDir = selfDir.substr(0, pos + 1);
 
-		std::string injectorPath = selfDir + "ReviveInjector.exe";
+		// Everything except the exe itself lives under Resources/ (see
+		// CMakeLists.txt - the installer ships the same layout).
+		std::string resourcesDir = selfDir + "Resources";
+		std::string injectorPath = resourcesDir + "\\ReviveInjector.exe";
 
 		if (!std::filesystem::exists(injectorPath))
 		{
-			ShowError(L"ReviveInjector.exe not found next to ReviveNext.exe.");
+			ShowError(L"Resources\\ReviveInjector.exe not found next to ReviveNext.exe.");
 			return 1;
 		}
 
-		EnsureActionManifestEnvVar(selfDir);
+		EnsureActionManifestEnvVar(resourcesDir);
 
-		// ReviveNext's own art storage (see ArtMatcherGui::Run) - survives
-		// independently of Steam, and carries over anything previously
-		// matched under Steam's shortcut naming (see GridArtSync::Run).
-		std::string artDir = selfDir + "Art";
+		// ReviveNext's own art storage (see ArtMatcherGui::Run) - per-user
+		// under %LOCALAPPDATA%, so an installed copy never needs elevation,
+		// and it carries over anything previously matched under Steam's
+		// shortcut naming (see GridArtSync::Run).
+		auto artDirOpt = AppData::SubDir("Art");
+		if (!artDirOpt)
+		{
+			ShowError(L"Could not create the art storage folder under %LOCALAPPDATA%.");
+			return 1;
+		}
+		std::string artDir = *artDirOpt;
 		GridArtSync::Run(games, injectorPath, artDir);
 
 		// Register each game as a visible SteamVR application last, so it
@@ -155,6 +166,17 @@ namespace
 // remember. Interactive runs (no arguments) behave exactly as before.
 int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR cmdLine, int)
 {
+	// openvr_api.dll is delay-loaded and lives under Resources/ - pull it
+	// in explicitly before the first OpenVR call, or the delay-load helper
+	// would go looking beside the exe, where it does not exist.
+	{
+		wchar_t selfPathW[MAX_PATH];
+		GetModuleFileNameW(nullptr, selfPathW, MAX_PATH);
+		if (wchar_t* slash = wcsrchr(selfPathW, L'\\'))
+			*slash = L'\0';
+		LoadLibraryW((std::wstring(selfPathW) + L"\\Resources\\openvr_api.dll").c_str());
+	}
+
 	if (cmdLine && wcsstr(cmdLine, L"/unregister"))
 	{
 		wchar_t selfPathW[MAX_PATH];
@@ -166,7 +188,7 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR cmdLine, int)
 		if (auto pos = selfDir.find_last_of("\\/"); pos != std::string::npos)
 			selfDir = selfDir.substr(0, pos + 1);
 
-		SteamVrAppRegistration::Unregister(selfDir + "ReviveInjector.exe");
+		SteamVrAppRegistration::Unregister(selfDir + "Resources\\ReviveInjector.exe");
 		return 0;
 	}
 
@@ -192,14 +214,22 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR cmdLine, int)
 			selfDir = selfDir.substr(0, pos + 1);
 
 		std::string logLine;
-		if (games.empty() || !std::filesystem::exists(selfDir + "ReviveInjector.exe"))
+		std::string resourcesDir = selfDir + "Resources";
+		if (games.empty() || !std::filesystem::exists(resourcesDir + "\\ReviveInjector.exe"))
 		{
 			logLine = games.empty() ? "no games found" : "ReviveInjector.exe missing";
 		}
 		else
 		{
-			EnsureActionManifestEnvVar(selfDir, /*quiet=*/true);
-			SteamVrAppRegistration::Sync(games, selfDir + "ReviveInjector.exe", selfDir + "Art", /*quiet=*/true);
+			if (auto artDir = AppData::SubDir("Art"))
+			{
+				EnsureActionManifestEnvVar(resourcesDir, /*quiet=*/true);
+				SteamVrAppRegistration::Sync(games, resourcesDir + "\\ReviveInjector.exe", *artDir, /*quiet=*/true);
+			}
+			else
+			{
+				logLine = "could not create art storage";
+			}
 			logLine = "registered " + std::to_string(games.size()) + " games";
 		}
 

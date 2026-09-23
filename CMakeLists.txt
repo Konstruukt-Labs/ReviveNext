@@ -11,6 +11,7 @@ add_subdirectory(${CMAKE_SOURCE_DIR}/3rdparty/json)
 
 add_executable(${APP_NAME} WIN32
     "src/Main.cpp"
+    "src/AppData.cpp"
     "src/GameDiscovery.cpp"
     "src/SteamVrAppRegistration.cpp"
     "src/IconConverter.cpp"
@@ -29,9 +30,15 @@ target_compile_features(${APP_NAME} PUBLIC cxx_std_23)
 set(OPENVR_DIR "${CMAKE_SOURCE_DIR}/revive/Externals/openvr")
 target_include_directories(${APP_NAME} PRIVATE "${OPENVR_DIR}/headers")
 
+# openvr_api.dll lives under Resources/ (not beside the exe), so it is
+# delay-loaded and explicitly preloaded from there at startup (see
+# wWinMain) - the implicit-import loader only searches the exe's own
+# directory.
+target_link_options(${APP_NAME} PRIVATE "/DELAYLOAD:openvr_api.dll")
 target_link_libraries(${APP_NAME}
     PRIVATE
         nlohmann_json::nlohmann_json
+        delayimp
         "${OPENVR_DIR}/lib/win64/openvr_api.lib"
         windowscodecs
         ole32
@@ -89,20 +96,24 @@ add_custom_target(revive_binaries
 add_dependencies(${APP_NAME} revive_binaries)
 
 add_custom_command(TARGET ${APP_NAME} POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:${APP_NAME}>/Input"
+    COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:${APP_NAME}>/Resources/Input"
 )
+# Everything ReviveNext needs at runtime lives under Resources/ - only the
+# exe itself (plus its compiled-in icon/badges/lockup) stays at the top
+# level. The installer ships exactly this layout.
+set(RESOURCES_DIR "$<TARGET_FILE_DIR:${APP_NAME}>/Resources")
 # The openvr_api.dll ReviveNext.exe itself loads for registration -
 # distinct from the injected openvr_api64.dll shim games get.
 add_custom_command(TARGET ${APP_NAME} POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
         "${OPENVR_DIR}/bin/win64/openvr_api.dll"
-        "$<TARGET_FILE_DIR:${APP_NAME}>"
+        "${RESOURCES_DIR}"
 )
 foreach(revive_binary ReviveInjector.exe LibRevive64.dll LibReviveXR64.dll openvr_api64.dll)
     add_custom_command(TARGET ${APP_NAME} POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
             "${REVIVE_OUT_DIR}/${revive_binary}"
-            "$<TARGET_FILE_DIR:${APP_NAME}>/${revive_binary}"
+            "${RESOURCES_DIR}/${revive_binary}"
     )
 endforeach()
 foreach(input_file
@@ -112,6 +123,20 @@ foreach(input_file
     add_custom_command(TARGET ${APP_NAME} POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
             "${REVIVE_DIR}/Revive/Input/${input_file}"
-            "$<TARGET_FILE_DIR:${APP_NAME}>/Input/${input_file}"
+            "${RESOURCES_DIR}/Input/${input_file}"
     )
 endforeach()
+
+# Installer (NSIS): cmake --build build --target installer produces
+# build/ReviveNext-Setup.exe from the just-built Release layout.
+find_program(MAKENSIS_EXE NAMES makensis PATHS "C:/Program Files (x86)/NSIS")
+if(NOT MAKENSIS_EXE)
+    message(FATAL_ERROR "makensis.exe not found - is NSIS installed?")
+endif()
+add_custom_target(installer
+    COMMAND "${MAKENSIS_EXE}" -V2 -DROOT=${CMAKE_SOURCE_DIR} "${CMAKE_SOURCE_DIR}/installer/ReviveNext.nsi"
+    WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
+    COMMENT "Building ReviveNext-Setup.exe with NSIS"
+    VERBATIM
+)
+add_dependencies(installer ${APP_NAME})
