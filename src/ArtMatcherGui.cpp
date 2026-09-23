@@ -3,6 +3,7 @@
 #include "resource.h"
 #include "SteamGridDb.h"
 #include "TitleOverrides.h"
+#include "Version.h"
 
 #include <windows.h>
 #include <commctrl.h>
@@ -996,7 +997,7 @@ std::vector<MetaGame> ArtMatcherGui::Run(const std::vector<MetaGame>& allGames,
 	wc.hbrBackground = (HBRUSH)(COLOR_WINDOW + 1);
 	RegisterClassW(&wc);
 
-	g.hwnd = CreateWindowExW(0, wc.lpszClassName, L"ReviveNext - Manage Library",
+	g.hwnd = CreateWindowExW(0, wc.lpszClassName, L"ReviveNext " REVIVENEXT_VERSION_L L" - Manage Library",
 		WS_OVERLAPPEDWINDOW & ~WS_THICKFRAME & ~WS_MAXIMIZEBOX,
 		CW_USEDEFAULT, CW_USEDEFAULT, 900, 860, nullptr, nullptr, wc.hInstance, nullptr);
 

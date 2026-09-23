@@ -5,17 +5,26 @@
 ; %LOCALAPPDATA%\ReviveNext and is intentionally left behind on uninstall.
 
 ; ROOT is passed in via -DROOT=<repo root> (see the installer target in
-; CMakeLists.txt).
+; CMakeLists.txt), along with the CalVer build stamp: VERSION in
+; yyyy.mm.dd form (installer title, DisplayVersion, ProductVersion
+; strings) and VERSION4 as an unpadded four-part numeric form for
+; VIProductVersion, whose fields don't accept zero-padding.
 
 !include "nsDialogs.nsh"
 !include "LogicLib.nsh"
 
-Name "ReviveNext"
+Name "ReviveNext ${VERSION}"
 OutFile "${ROOT}\build\ReviveNext-Setup.exe"
 Icon "${ROOT}\Art\revive-next.ico"
 InstallDir "$PROGRAMFILES64\ReviveNext"
 InstallDirRegKey HKLM "Software\ReviveNext" "InstallDir"
 RequestExecutionLevel admin
+VIProductVersion "${VERSION4}"
+VIAddVersionKey "ProductName" "ReviveNext"
+VIAddVersionKey "ProductVersion" "${VERSION}"
+VIAddVersionKey "FileVersion" "${VERSION}"
+VIAddVersionKey "FileDescription" "ReviveNext Setup"
+VIAddVersionKey "LegalCopyright" "Brian Gilbert"
 
 Page directory
 Page custom SupportPageCreate SupportPageLeave
@@ -115,6 +124,7 @@ Section "ReviveNext"
   WriteUninstaller "$INSTDIR\Uninstall.exe"
   WriteRegStr HKLM "Software\ReviveNext" "InstallDir" "$INSTDIR"
   WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\ReviveNext" "DisplayName" "ReviveNext"
+  WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\ReviveNext" "DisplayVersion" "${VERSION}"
   WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\ReviveNext" "UninstallString" '"$INSTDIR\Uninstall.exe"'
   WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\ReviveNext" "DisplayIcon" '"$INSTDIR\ReviveNext.exe"'
   WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\ReviveNext" "Publisher" "Brian Gilbert"

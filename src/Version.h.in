@@ -1,0 +1,6 @@
+// Generated at configure time by CMakeLists.txt - the CalVer build
+// stamp (yyyy.mm.dd). _L is the wide form for window titles, _RC the
+// comma form the VERSIONINFO resource needs (no zero-padded parts).
+#define REVIVENEXT_VERSION    "@REVIVENEXT_VERSION@"
+#define REVIVENEXT_VERSION_L  L"@REVIVENEXT_VERSION@"
+#define REVIVENEXT_VERSION_RC @REVIVENEXT_VERSION_RC@

@@ -63,6 +63,16 @@ jobs:
           choco install nsis -y --no-progress
           Add-Content $env:GITHUB_PATH 'C:\Program Files (x86)\NSIS'
 
+      # CalVer stamp (yyyy.mm.dd, UTC) shared by the exe's version
+      # resource, the installer metadata and the release tag. Computed
+      # once here so a job that crosses UTC midnight stamps and tags the
+      # same date.
+      - name: Version stamp
+        shell: pwsh
+        run: |
+          $v = (Get-Date).ToUniversalTime().ToString('yyyy.MM.dd')
+          Add-Content $env:GITHUB_ENV "REVIVENEXT_VERSION=$v"
+
       # Builds ReviveNext.exe + Resources via MSBuild, then the NSIS
       # installer target produces build/ReviveNext-Setup.exe (NSIS is
       # installed in the step above). Configure and build are chained with
@@ -71,14 +81,19 @@ jobs:
       - name: Build installer
         shell: pwsh
         run: |
-          cmake -B build -S . && cmake --build build --config Release --target installer
+          cmake -B build -S . "-DREVIVENEXT_VERSION=$env:REVIVENEXT_VERSION" && cmake --build build --config Release --target installer
 
+      # Releases are tagged with the CalVer stamp the artifacts carry. A
+      # same-day re-push appends the run number to the tag so it can't
+      # collide with the existing release.
       - name: Create release
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          $tag = "build-$env:GITHUB_RUN_NUMBER"
+          $tag = $env:REVIVENEXT_VERSION
+          gh release view $tag *> $null
+          if ($LASTEXITCODE -eq 0) { $tag = "$tag.$env:GITHUB_RUN_NUMBER" }
           gh release create $tag build/ReviveNext-Setup.exe `
-            --title "ReviveNext build #$env:GITHUB_RUN_NUMBER" `
+            --title "ReviveNext $tag" `
             --generate-notes --latest

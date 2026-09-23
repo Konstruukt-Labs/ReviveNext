@@ -6,6 +6,31 @@ set(APP_NAME "ReviveNext")
 
 project(${APP_NAME} LANGUAGES CXX)
 
+# CalVer stamp (yyyy.mm.dd, UTC build date) identifying every build:
+# the GUI window title, the exe's version resource, the installer
+# metadata and the release tag all carry the same string. The release
+# workflow passes it in via -DREVIVENEXT_VERSION so the built artifacts
+# can't disagree with the tag a job publishes; local builds fall back
+# to the configure date.
+set(REVIVENEXT_VERSION "" CACHE STRING "CalVer version stamp (yyyy.mm.dd)")
+if(NOT REVIVENEXT_VERSION)
+    string(TIMESTAMP REVIVENEXT_VERSION "%Y.%m.%d" UTC)
+endif()
+if(NOT REVIVENEXT_VERSION MATCHES "^[0-9][0-9][0-9][0-9]\\.[0-9][0-9]\\.[0-9][0-9]$")
+    message(FATAL_ERROR "REVIVENEXT_VERSION must be yyyy.mm.dd, got '${REVIVENEXT_VERSION}'")
+endif()
+# Numeric four-part forms for the Windows VERSIONINFO fields and NSIS
+# VIProductVersion - neither accepts zero-padded components.
+string(REPLACE "." ";" _vparts "${REVIVENEXT_VERSION}")
+list(GET _vparts 0 _vy)
+list(GET _vparts 1 _vm)
+list(GET _vparts 2 _vd)
+string(REGEX REPLACE "^0+([0-9])" "\\1" _vm "${_vm}")
+string(REGEX REPLACE "^0+([0-9])" "\\1" _vd "${_vd}")
+set(REVIVENEXT_VERSION_RC "${_vy},${_vm},${_vd},0")
+set(REVIVENEXT_VERSION4 "${_vy}.${_vm}.${_vd}.0")
+configure_file("${CMAKE_SOURCE_DIR}/src/Version.h.in" "${CMAKE_CURRENT_BINARY_DIR}/Version.h" @ONLY)
+
 set(JSON_BuildTests OFF CACHE INTERNAL "")
 add_subdirectory(${CMAKE_SOURCE_DIR}/3rdparty/json)
 
@@ -29,6 +54,9 @@ target_compile_features(${APP_NAME} PUBLIC cxx_std_23)
 # the pristine loader shipped in the vendored submodule.
 set(OPENVR_DIR "${CMAKE_SOURCE_DIR}/revive/Externals/openvr")
 target_include_directories(${APP_NAME} PRIVATE "${OPENVR_DIR}/headers")
+# Generated Version.h (CalVer stamp) - see the REVIVENEXT_VERSION block
+# near the top of this file.
+target_include_directories(${APP_NAME} PRIVATE "${CMAKE_CURRENT_BINARY_DIR}")
 
 # openvr_api.dll lives under Resources/ (not beside the exe), so it is
 # delay-loaded and explicitly preloaded from there at startup (see
@@ -134,7 +162,9 @@ if(NOT MAKENSIS_EXE)
     message(FATAL_ERROR "makensis.exe not found - is NSIS installed?")
 endif()
 add_custom_target(installer
-    COMMAND "${MAKENSIS_EXE}" -V2 -DROOT=${CMAKE_SOURCE_DIR} "${CMAKE_SOURCE_DIR}/installer/ReviveNext.nsi"
+    COMMAND "${MAKENSIS_EXE}" -V2 -DROOT=${CMAKE_SOURCE_DIR}
+        -DVERSION=${REVIVENEXT_VERSION} -DVERSION4=${REVIVENEXT_VERSION4}
+        "${CMAKE_SOURCE_DIR}/installer/ReviveNext.nsi"
     WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
     COMMENT "Building ReviveNext-Setup.exe with NSIS"
     VERBATIM

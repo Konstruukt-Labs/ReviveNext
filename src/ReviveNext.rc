@@ -1,4 +1,11 @@
 #include "resource.h"
+#include "Version.h"
+
+// No windows headers are included here, so define the version-resource
+// name identifier ourselves: the version APIs search for the RT_VERSION
+// resource by ID 1, and without this define RC would name it with the
+// string "VS_VERSION_INFO" instead, which no version reader finds.
+#define VS_VERSION_INFO 1
 
 // Embedded art badges - see src/resource.h.
 IDB_REVIVE_BADGE_PORTRAIT RCDATA "..\\Art\\revive-next-badge-white-96.png"
@@ -6,3 +13,34 @@ IDB_REVIVE_BADGE_HOME RCDATA "..\\Art\\revive-next-badge-white-48.png"
 IDB_REVIVE_LOGO RCDATA "..\\Art\\revive-next-lockup-160h.png"
 
 IDI_APP ICON "..\\Art\\revive-next.ico"
+
+// Standard version resource carrying the CalVer build stamp generated
+// into Version.h by CMake at configure time - the same string the GUI
+// title, installer metadata and release tag use (see CMakeLists.txt).
+VS_VERSION_INFO VERSIONINFO
+ FILEVERSION REVIVENEXT_VERSION_RC
+ PRODUCTVERSION REVIVENEXT_VERSION_RC
+ FILEFLAGSMASK 0x3fL
+ FILEFLAGS 0x0L
+ FILEOS 0x40004L
+ FILETYPE 0x1L
+ FILESUBTYPE 0x0L
+BEGIN
+	BLOCK "StringFileInfo"
+	BEGIN
+		BLOCK "040904b0"
+		BEGIN
+			VALUE "CompanyName", "Brian Gilbert"
+			VALUE "FileDescription", "ReviveNext"
+			VALUE "FileVersion", REVIVENEXT_VERSION
+			VALUE "InternalName", "ReviveNext"
+			VALUE "OriginalFilename", "ReviveNext.exe"
+			VALUE "ProductName", "ReviveNext"
+			VALUE "ProductVersion", REVIVENEXT_VERSION
+		END
+	END
+	BLOCK "VarFileInfo"
+	BEGIN
+		VALUE "Translation", 0x409, 1200
+	END
+END
