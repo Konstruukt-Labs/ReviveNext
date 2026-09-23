@@ -61,13 +61,33 @@ button asks for one); without it everything else still works.
 
 ## Building
 
-Requires Visual Studio 2019+ (with C++ tools), CMake 3.21+, and a
-one-time local setup of two dependencies that can't be committed —
-see [revive/BUILDING.md](revive/BUILDING.md) for details:
+Requires Visual Studio 2022 (v143 toolset, with the C++ and ATL
+components — the vendored revive projects pin v143 and include
+`atlbase.h`), CMake 3.21+, and NSIS (the configure step looks for
+`makensis` for the installer target). Two dependencies that can't be
+committed need a one-time local setup — see
+[revive/BUILDING.md](revive/BUILDING.md) for details:
 
 - Meta's Oculus SDK → `revive/Externals/LibOVR/`
-- The OpenXR loader source → `revive/Externals/openxr/`
-  (or provided via a [vcpkg](https://vcpkg.io) `openxr` installation)
+- `detours` and `openxr-loader` from [vcpkg](https://vcpkg.io), resolved
+  through its MSBuild integration (the projects use the
+  `x64-windows-static` triplet)
+
+Clone with submodules — a plain clone leaves `3rdparty/json` and the
+`revive/Externals/` submodules (openvr, microprofile, Vulkan-Headers)
+empty, and configure fails on the missing json sources before it can
+say why:
+
+```
+git clone --recursive git@github.com:Konstruukt-Labs/ReviveNext.git
+# or, in an existing clone:
+git submodule update --init --recursive
+```
+
+The pinned openvr commit only needs its headers and libs; adding
+`--filter=blob:none` fetches just what the checkouts materialize
+(~13 MB instead of openvr's ~500 MB of history) — the same
+blob-filtered fetch the CI workflow uses.
 
 Then:
 
@@ -78,7 +98,15 @@ cmake --build build --config Release
 
 Everything lands in `build/Release/`: `ReviveNext.exe`, the injector and
 translation DLLs (built from `revive/` via its Visual Studio solution),
-and the OpenVR loader.
+and the OpenVR loader. For the NSIS installer on top:
+
+```
+cmake --build build --config Release --target installer
+```
+
+produces `build/ReviveNext-Setup.exe` from that same layout. The
+`--config Release` matters: the installer packages `build/Release/`,
+and a config-less default Debug build leaves NSIS with no files.
 
 ## Project layout
 
