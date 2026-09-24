@@ -136,6 +136,16 @@ Beyond upstream, `revive/` includes fixes made here:
 
 ## Known behavior
 
+- **Library art doesn't render on the Steam Frame.** In Steam Frame
+  sessions (Deckard over vrlink), the Library's Other Apps cards draw no
+  artwork for manifest-registered apps: the session's library UI
+  preloads its app list but never fetches vrmanifest images, and no
+  Steam-side art (shortcuts, grid images) reaches those cards either —
+  even artwork set through Steam's own UI, which renders on the desktop
+  Library, is ignored there. The same SteamVR build shows ReviveNext's
+  art on a Quest via Steam Link, and Steam games' store art renders on
+  both. This is a gap in the Frame's library UI, not something
+  ReviveNext registers differently.
 - **Quitting a game ends the SteamVR session.** This is SteamVR's own
   lifecycle for applications launched from its Library as binary
   manifests — even Valve's own SteamVR Media Player behaves this way,
