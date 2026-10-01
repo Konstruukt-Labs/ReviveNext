@@ -2,55 +2,78 @@
 
 *Built for SteamVR's modern dashboard & Quick Access menu.*
 
-Play your Meta Horizon (Oculus Rift-platform) PC games in SteamVR — listed,
+Play your Meta Horizon (Oculus Rift-platform) PC games in SteamVR: listed,
 launched, and badged natively in SteamVR's own Library.
 
 ReviveNext discovers the Rift-platform games installed on your machine and
-registers each one as a SteamVR application, so they appear in SteamVR's
-Library (Other Apps) with cover art and launch through SteamVR's normal
-app flow. Launching a game runs it through Revive's proven
+registers each one as a SteamVR application. They appear in SteamVR's
+Library under Other Apps with cover art and launch through SteamVR's
+normal app flow. Launching a game runs it through Revive's proven
 [LibOVR → OpenVR/OpenXR translation layer](revive/), which is built from
-source here — no Oculus PC software needs to be running beyond what the
+source here. No Oculus PC software needs to be running beyond what the
 games' entitlement check talks to.
 
 ![The ReviveNext application window](ReviveNext-AppWindow.webp)
 
 ## How it works
 
-- **Game discovery** — scans Meta Horizon's local install (registry +
+- **Game discovery**: scans Meta Horizon's local install (registry +
   per-game manifests), independent of whether the Meta Horizon software
   itself is running.
-- **SteamVR registration** — every game is registered as a
+- **SteamVR registration**: every game is registered as a
   `revive.app.<game>` application via `AddApplicationManifest`, with its
   matched art and Revive's action manifest attached. Launching from
   SteamVR's Library gives the full app-launch flow: loading screen while
   the game starts, the game running under its registered identity, and
   the dashboard afterwards.
-- **Self-maintaining** — ReviveNext also registers *itself* as a hidden
+- **Self-maintaining**: ReviveNext also registers *itself* as a hidden
   auto-launch application. Every time SteamVR starts, it briefly runs a
   headless copy of ReviveNext that rescans the installed games and
   refreshes the Library entries. Install or remove a game at any time;
   the next SteamVR session picks it up automatically. There is no
   resident background process. Each run is logged to
   `%LOCALAPPDATA%\ReviveNext\autoregister.log`.
-- **Art matching** — a review window walks through every game and matches
+- **Art matching**: a review window walks through every game and matches
   it against [SteamGridDB](https://www.steamgriddb.com) (a free API key,
   entered once, is all that's needed): the portrait cover and the
   widescreen Home art, both pickable in one search. Picked art is saved
   in ReviveNext's own storage (`Art/` next to the exe, keyed by game) and
-  burned with the ReviveNext badge — 96 px on covers, 48 px on Home art,
-  bottom-left with 20 px padding. Only newly picked art is stamped;
+  burned with the ReviveNext badge at 96 px on covers and 48 px on Home
+  art, bottom-left with 20 px padding. Only newly picked art is stamped;
   re-picking refreshes it. Picking also stores the plain-English title.
+- **No Meta software running**: nothing Meta installs to start at boot
+  is needed. Discovery works from the on-disk install regardless. When a
+  game launches, the bundled injector cold-starts the one Meta process a
+  game actually needs: `Support\oculus-runtime\OVRServer_x64.exe`, what
+  the game's bundled Oculus Platform SDK entitlement check talks to. The
+  injector starts it unelevated, with no console window. Meta's own
+  start-up mechanisms are deliberately bypassed: the `OVRService`
+  Windows service runs the same exe as LocalSystem, which an entitlement
+  check rejects exactly as if nothing were running, and
+  `OVRServiceLauncher.exe` (the app's Startup-folder watchdog) requires
+  elevation. If SteamVR is the only way you use the headset, stop both
+  auto-start paths: disable Meta Horizon Link's startup entries
+  (Task Manager → Startup apps), and set the Oculus VR Runtime Service
+  (`OVRService`) to Manual (services.msc → right-click it → Properties →
+  Startup type). It ships as Automatic and never appears in Task
+  Manager's Startup apps. ReviveNext doesn't use the service, so Manual
+  costs nothing. Games just need to stay installed.
 
 ## Using it
 
 1. **One-time bootstrap:** start SteamVR, then run `ReviveNext.exe` once.
-   The art review window opens — pick (or skip) art for each game, close
+   The art review window opens. Pick (or skip) art for each game, close
    it when done. This registers everything, including the auto-launch
    hook.
 2. From then on, your games are in SteamVR's Library under **Other
    Apps**, with art, ready to launch. New games appear automatically at
    the next SteamVR start.
+
+**SteamVR-only machines:** you can stop the Meta Horizon Link app, its
+startup entries, and the Oculus VR Runtime Service (`services.msc`, set
+it to Manual) from running entirely; see *No Meta software running*
+under [How it works](#how-it-works). Games must stay installed, of
+course.
 
 Command line:
 
@@ -66,10 +89,10 @@ button asks for one); without it everything else still works.
 ## Building
 
 Requires Visual Studio 2022 (v143 toolset, with the C++ and ATL
-components — the vendored revive projects pin v143 and include
+components; the vendored revive projects pin v143 and include
 `atlbase.h`), CMake 3.21+, and NSIS (the configure step looks for
 `makensis` for the installer target). Two dependencies that can't be
-committed need a one-time local setup — see
+committed need a one-time local setup; see
 [revive/BUILDING.md](revive/BUILDING.md) for details:
 
 - Meta's Oculus SDK → `revive/Externals/LibOVR/`
@@ -77,7 +100,7 @@ committed need a one-time local setup — see
   through its MSBuild integration (the projects use the
   `x64-windows-static` triplet)
 
-Clone with submodules — a plain clone leaves `3rdparty/json` and the
+Clone with submodules. A plain clone leaves `3rdparty/json` and the
 `revive/Externals/` submodules (openvr, microprofile, Vulkan-Headers)
 empty, and configure fails on the missing json sources before it can
 say why:
@@ -90,7 +113,7 @@ git submodule update --init --recursive
 
 The pinned openvr commit only needs its headers and libs; adding
 `--filter=blob:none` fetches just what the checkouts materialize
-(~13 MB instead of openvr's ~500 MB of history) — the same
+(~13 MB instead of openvr's ~500 MB of history), the same
 blob-filtered fetch the CI workflow uses.
 
 Then:
@@ -116,7 +139,7 @@ and a config-less default Debug build leaves NSIS with no files.
 
 | | |
 |---|---|
-| `src/` | ReviveNext itself — discovery, SteamVR registration, art review GUI |
+| `src/` | ReviveNext itself: discovery, SteamVR registration, art review GUI |
 | `revive/` | The vendored [Revive](https://github.com/LibreVR/Revive) runtime source (MIT): injector + LibOVR translation DLLs, maintained here |
 | `3rdparty/` | nlohmann/json |
 | `Art/` | Brand assets; the badge/lockup PNGs are compiled into the exe as resources |
@@ -128,14 +151,14 @@ Beyond upstream, `revive/` includes fixes made here:
 - **Controller haptics work again.** SteamVR silently drops the legacy
   `TriggerHapticPulse` API when called by a scene application on several
   modern stacks (confirmed on Steam Link with a Quest), which left every
-  game without rumble. Haptics now go through vibration actions — declared
+  game without rumble. Haptics now go through vibration actions, declared
   in Revive's action manifest and fired as short re-applied bursts from
   the haptics thread, the same approach the OpenXR backend already used.
 - **Performance fixes:** per-node allocation removal and split GPU submits
   in ReviveXR's EndFrame, deferred swapchain image waits, a cached
   calibrated tracking origin (invalidated on recenter), O(1) haptics queue
   accounting, D3D flushes only where the D3D11on12 contract requires them,
-  and the haptics thread no longer making idle OpenVR IPC calls — among
+  and the haptics thread no longer making idle OpenVR IPC calls, all on
   the games' hottest per-frame paths.
 
 ## Known behavior
@@ -144,23 +167,29 @@ Beyond upstream, `revive/` includes fixes made here:
   sessions (Deckard over vrlink), the Library's Other Apps cards draw no
   artwork for manifest-registered apps: the session's library UI
   preloads its app list but never fetches vrmanifest images, and no
-  Steam-side art (shortcuts, grid images) reaches those cards either —
-  even artwork set through Steam's own UI, which renders on the desktop
+  Steam-side art (shortcuts, grid images) reaches those cards either.
+  Even artwork set through Steam's own UI, which renders on the desktop
   Library, is ignored there. The same SteamVR build shows ReviveNext's
   art on a Quest via Steam Link, and Steam games' store art renders on
   both. This is a gap in the Frame's library UI, not something
   ReviveNext registers differently.
 - **Quitting a game ends the SteamVR session.** This is SteamVR's own
   lifecycle for applications launched from its Library as binary
-  manifests — even Valve's own SteamVR Media Player behaves this way,
+  manifests; even Valve's own SteamVR Media Player behaves this way,
   and only SteamVR Home (special-cased inside SteamVR) survives it.
 - SteamVR on a Quest via Steam Link occasionally fails its reconnect
   handshake right after a session ends, crash-looping until Steam is
   restarted or the headset is power-cycled. This is a SteamVR/vrlink
   issue, not specific to ReviveNext.
 
+## Support development
+
+ReviveNext is free. If it brings your games back to life, you can
+[sponsor on GitHub](https://github.com/sponsors/BrianGilbert) or
+[buy a coffee](https://buymeacoffee.com/itsvrk).
+
 ## Credits
 
-- [LibreVR/Revive](https://github.com/LibreVR/Revive) — the runtime
+- [LibreVR/Revive](https://github.com/LibreVR/Revive): the runtime
   translation layer this project builds on (MIT).
-- [SteamGridDB](https://www.steamgriddb.com) — art source.
+- [SteamGridDB](https://www.steamgriddb.com): art source.
