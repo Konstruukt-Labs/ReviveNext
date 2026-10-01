@@ -1,5 +1,7 @@
 # ReviveNext
 
+*Built for SteamVR's modern dashboard & Quick Access menu.*
+
 Play your Meta Horizon (Oculus Rift-platform) PC games in SteamVR — listed,
 launched, and badged natively in SteamVR's own Library.
 
@@ -10,6 +12,8 @@ app flow. Launching a game runs it through Revive's proven
 [LibOVR → OpenVR/OpenXR translation layer](revive/), which is built from
 source here — no Oculus PC software needs to be running beyond what the
 games' entitlement check talks to.
+
+![The ReviveNext application window](ReviveNext-AppWindow.webp)
 
 ## How it works
 
