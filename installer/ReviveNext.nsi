@@ -73,7 +73,7 @@ FunctionEnd
 Function DonePageCreate
 	nsDialogs::Create 1018
 	Pop $0
-	${NSD_CreateLabel} 0 0 100% 150u "Making your games show up in SteamVR's Library (Other Apps tab):$\n$\n1. Have SteamVR running (start it if it is not).$\n2. Launch ReviveNext - the art review window opens; close it whenever you are done. This registers your games and arms the automatic refresh.$\n3. The games appear under Other Apps. If the list does not refresh right away, restart SteamVR once.$\n$\nFrom then on it is fully automatic: every SteamVR start refreshes the list, and newly installed games appear on their own.$\n$\n(Cover art matching is optional - enter a free SteamGridDB API key via the Settings button in the application window.)"
+	${NSD_CreateLabel} 0 0 100% 150u "Making your games show up in SteamVR's Library (Non Steam tab):$\n$\n1. Have SteamVR running (start it if it is not).$\n2. Launch ReviveNext - the art review window opens; close it whenever you are done. This registers your games and arms the automatic refresh.$\n3. The games appear under Non Steam. If the list does not refresh right away, restart SteamVR once.$\n$\nFrom then on it is fully automatic: every SteamVR start refreshes the list, and newly installed games appear on their own.$\n$\n(Cover art matching is optional - enter a free SteamGridDB API key via the Settings button in the application window.)"
 	Pop $0
 	nsDialogs::Show
 FunctionEnd

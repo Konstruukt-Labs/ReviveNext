@@ -734,10 +734,10 @@ namespace
 			{
 				MessageBoxW(hwnd,
 					L"Registration happens when this window closes - launch ReviveNext whenever you like, as long as SteamVR is running by the time you close it.\n\n"
-					L"Making your games show up in SteamVR's Library (Other Apps tab):\n\n"
+					L"Making your games show up in SteamVR's Library (Non Steam tab):\n\n"
 					L"1. Have SteamVR running (start it if it is not).\n"
 					L"2. Close this window when you are done - that registers your games and arms the automatic refresh.\n"
-					L"3. The games appear under Other Apps. If the list does not refresh right away, restart SteamVR once.\n\n"
+					L"3. The games appear under Non Steam. If the list does not refresh right away, restart SteamVR once.\n\n"
 					L"From then on it is fully automatic: every SteamVR start refreshes the list, and newly installed games appear on their own.\n\n"
 					L"(Cover art matching is optional - enter a free SteamGridDB API key via the Settings button in the application window.)",
 					L"ReviveNext - Help", MB_ICONINFORMATION);

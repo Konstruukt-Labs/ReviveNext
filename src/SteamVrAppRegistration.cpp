@@ -228,7 +228,7 @@ void SteamVrAppRegistration::Unregister(const std::string& injectorPath)
 	{
 		MessageBoxA(nullptr,
 			"ReviveNext's applications were removed from SteamVR.\n"
-			"The Other Apps list updates immediately.",
+			"The Non Steam list updates immediately.",
 			"ReviveNext", MB_ICONINFORMATION);
 	}
 

@@ -7,7 +7,7 @@ launched, and badged natively in SteamVR's own Library.
 
 ReviveNext discovers the Rift-platform games installed on your machine and
 registers each one as a SteamVR application. They appear in SteamVR's
-Library under Other Apps with cover art and launch through SteamVR's
+Library under Non Steam with cover art and launch through SteamVR's
 normal app flow. Launching a game runs it through Revive's proven
 [LibOVR → OpenVR/OpenXR translation layer](revive/), which is built from
 source here. No Oculus PC software needs to be running beyond what the
@@ -164,7 +164,7 @@ Beyond upstream, `revive/` includes fixes made here:
 ## Known behavior
 
 - **Library art doesn't render on the Steam Frame.** In Steam Frame
-  sessions (Deckard over vrlink), the Library's Other Apps cards draw no
+  sessions (Deckard over vrlink), the Library's Non Steam cards draw no
   artwork for manifest-registered apps: the session's library UI
   preloads its app list but never fetches vrmanifest images, and no
   Steam-side art (shortcuts, grid images) reaches those cards either.
