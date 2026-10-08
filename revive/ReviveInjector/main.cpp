@@ -8,13 +8,15 @@
 #include <Shlobj.h>
 #include <Shlwapi.h>
 #include <TlHelp32.h>
+#include <dxgi.h>
+#pragma comment(lib, "dxgi.lib")
 #include <openvr.h>
 #include <detours/detours.h>
+#include "../version.h"
 
 extern FILE* g_LogFile;
-#define LOG(x, ...) if (g_LogFile) fprintf(g_LogFile, x, __VA_ARGS__); \
-					printf(x, __VA_ARGS__); \
-					fflush(g_LogFile);
+#define LOG(x, ...) do { if (g_LogFile) { fprintf(g_LogFile, x, __VA_ARGS__); fflush(g_LogFile); } \
+					printf(x, __VA_ARGS__); } while(0)
 
 FILE* g_LogFile = NULL;
 
@@ -23,6 +25,7 @@ FILE* g_LogFile = NULL;
 // without this list it will occasionally attempt (harmlessly, but
 // noisily/slowly) to inject into browsers, chat apps, launchers, etc.
 static const wchar_t* const s_BlockedProcesses[] = {
+	L"roblox", L"robloxplayerbeta", L"robloxstudiobeta",
 	L"chrome", L"firefox", L"msedge", L"opera", L"brave",
 	L"steam", L"steamwebhelper",
 	L"discord", L"spotify",
@@ -56,10 +59,10 @@ static bool IsBlockedProcess(const wchar_t* cmdLine)
 // Reads a REG_SZ value, returning an empty string if the key/value is
 // missing or of the wrong type. Used only for the optional manual overrides
 // below - none of this is required for normal operation.
-static std::wstring RegReadSZ(HKEY root, LPCWSTR subkey, LPCWSTR value)
+static std::wstring RegReadSZ(HKEY root, LPCWSTR subkey, LPCWSTR value, DWORD flags = KEY_READ)
 {
 	HKEY key;
-	if (RegOpenKeyExW(root, subkey, 0, KEY_READ, &key) != ERROR_SUCCESS)
+	if (RegOpenKeyExW(root, subkey, 0, flags, &key) != ERROR_SUCCESS)
 		return L"";
 	DWORD type = 0, size = 0;
 	if (RegQueryValueExW(key, value, nullptr, &type, nullptr, &size) != ERROR_SUCCESS || type != REG_SZ || size == 0)
@@ -365,6 +368,61 @@ int wmain(int argc, wchar_t *argv[]) {
 	}
 
 	LOG("Launched injector with: %ls\n", GetCommandLine());
+
+	// Environment snapshot, one block per install: which Revive build is
+	// logging, which Meta Horizon driver / SteamVR / OpenXR runtime / GPU
+	// driver it ran against. Purely diagnostic - support tickets quote this.
+	LOG("Env: Revive version = " REV_VERSION_STRING "\n");
+
+	std::wstring oculusVer = RegReadSZ(HKEY_LOCAL_MACHINE, L"SOFTWARE\\Oculus VR, LLC\\Oculus", L"DriverVersion", KEY_READ | KEY_WOW64_32KEY);
+	if (oculusVer.empty())
+		LOG("Env: Meta Horizon driver = unknown\n");
+	else
+		LOG("Env: Meta Horizon driver = %ls\n", oculusVer.c_str());
+
+	if (vr::VR_IsRuntimeInstalled())
+	{
+		char steamvrPath[MAX_PATH] = {};
+		uint32_t pathLen = 0;
+		vr::VR_GetRuntimePath(steamvrPath, MAX_PATH, &pathLen);
+		LOG("Env: SteamVR = installed, runtime path = %s\n", steamvrPath);
+	}
+	else
+	{
+		LOG("Env: SteamVR = not installed\n");
+	}
+
+	std::wstring xrRuntime = RegReadSZ(HKEY_LOCAL_MACHINE, L"SOFTWARE\\Khronos\\OpenXR\\1", L"ActiveRuntime");
+	if (xrRuntime.empty())
+		LOG("Env: OpenXR runtime = not installed\n");
+	else
+		LOG("Env: OpenXR runtime = %ls\n", xrRuntime.c_str());
+
+	{
+		std::string gpuDriver = "unknown";
+		IDXGIFactory* factory = nullptr;
+		if (SUCCEEDED(CreateDXGIFactory(__uuidof(IDXGIFactory), (void**)&factory)))
+		{
+			IDXGIAdapter* adapter = nullptr;
+			if (SUCCEEDED(factory->EnumAdapters(0, &adapter)))
+			{
+				LARGE_INTEGER ver;
+				if (SUCCEEDED(adapter->CheckInterfaceSupport(__uuidof(IDXGIDevice), &ver)))
+				{
+					char buf[64];
+					sprintf_s(buf, "%u.%u.%u.%u",
+						(UINT)((ver.QuadPart >> 48) & 0xFFFF),
+						(UINT)((ver.QuadPart >> 32) & 0xFFFF),
+						(UINT)((ver.QuadPart >> 16) & 0xFFFF),
+						(UINT)(ver.QuadPart & 0xFFFF));
+					gpuDriver = buf;
+				}
+				adapter->Release();
+			}
+			factory->Release();
+		}
+		LOG("Env: GPU driver = %s\n", gpuDriver.c_str());
+	}
 
 
 	char moduleDir[MAX_PATH];
