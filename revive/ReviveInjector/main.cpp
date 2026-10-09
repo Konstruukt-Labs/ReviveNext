@@ -124,6 +124,63 @@ bool GetOculusBasePath(PWCHAR path, DWORD length)
 	return true;
 }
 
+// True when path is a volume GUID path in either Win32 extended
+// ("\\?\Volume{...}") or NT object manager ("\??\Volume{...}") syntax.
+static bool IsVolumeGuidPath(const wchar_t* path)
+{
+	if (!path)
+		return false;
+
+	return path[0] == L'\\' &&
+		(path[1] == L'\\' || path[1] == L'?') &&
+		path[2] == L'?' &&
+		path[3] == L'\\' &&
+		_wcsnicmp(path + 4, L"Volume{", 7) == 0;
+}
+
+// Resolves an Oculus library "Path" registry value - a volume GUID path plus
+// sub-path (e.g. "\\?\Volume{...}\Software\...") - to a mounted path.
+// Non-GUID values pass through unchanged, and volumes that fail to resolve
+// fall back to the raw value instead of leaving the output empty. Ported
+// from Revived PR #1 (ThePhaseless); the sub-path append is bounded by the
+// space actually left in outPath rather than the full buffer length.
+static bool ResolveVolumePath(const wchar_t* volumePath, wchar_t* outPath, DWORD length)
+{
+	if (!volumePath || !outPath || length == 0)
+		return false;
+
+	if (IsVolumeGuidPath(volumePath) && wcslen(volumePath) >= 49)
+	{
+		// Volume GUID strings are 49 chars: \\?\Volume{guid}\. The volume
+		// APIs strictly require the "\\?\" prefix, so normalize NT "\??\".
+		DWORD total = 0;
+		WCHAR volume[50] = L"\\\\?\\";
+		wcsncpy(volume + 4, volumePath + 4, 45);
+		volume[49] = L'\0';
+
+		outPath[0] = L'\0';
+		if (GetVolumePathNamesForVolumeNameW(volume, outPath, length, &total) && outPath[0] != L'\0')
+		{
+			const wchar_t* subPath = volumePath + 49;
+			while (*subPath == L'\\' || *subPath == L'/')
+				subPath++;
+			size_t used = wcslen(outPath);
+			wcsncat(outPath, subPath, length - used - 1);
+		}
+		else
+		{
+			wcsncpy(outPath, volumePath, length - 1);
+			outPath[length - 1] = L'\0';
+		}
+	}
+	else
+	{
+		wcsncpy(outPath, volumePath, length - 1);
+		outPath[length - 1] = L'\0';
+	}
+	return true;
+}
+
 bool GetLibraryPath(PWCHAR path, DWORD length, PWCHAR guid)
 {
 	LONG error = ERROR_SUCCESS;
@@ -155,11 +212,7 @@ bool GetLibraryPath(PWCHAR path, DWORD length, PWCHAR guid)
 	}
 
 	// Resolve the volume path to a mount point
-	DWORD total;
-	WCHAR volume[50] = { L'\0' };
-	wcsncpy(volume, volumePath, 49);
-	GetVolumePathNamesForVolumeNameW(volume, path, length, &total);
-	wcsncat(path, volumePath + 49, MAX_PATH);
+	ResolveVolumePath(volumePath, path, length);
 	free(volumePath);
 
 	return true;
@@ -190,37 +243,7 @@ bool GetDefaultLibraryPath(PWCHAR path, DWORD length)
 		return false;
 	}
 
-	// Open the default library key
-	wcsncat(keyPath, guid, MAX_PATH);
-	error = RegOpenKeyExW(HKEY_CURRENT_USER, keyPath, 0, KEY_READ, &oculusKey);
-	if (error != ERROR_SUCCESS)
-	{
-		LOG("Unable to open Library path key.");
-		return false;
-	}
-
-	// Get the volume path to this library
-	DWORD pathSize;
-	error = RegQueryValueExW(oculusKey, L"Path", NULL, NULL, NULL, &pathSize);
-	PWCHAR volumePath = (PWCHAR)malloc(pathSize);
-	error = RegQueryValueExW(oculusKey, L"Path", NULL, NULL, (PBYTE)volumePath, &pathSize);
-	RegCloseKey(oculusKey);
-	if (error != ERROR_SUCCESS)
-	{
-		free(volumePath);
-		LOG("Unable to read Library path.");
-		return false;
-	}
-
-	// Resolve the volume path to a mount point
-	DWORD total;
-	WCHAR volume[50] = { L'\0' };
-	wcsncpy(volume, volumePath, 49);
-	GetVolumePathNamesForVolumeNameW(volume, path, length, &total);
-	wcsncat(path, volumePath + 49, MAX_PATH);
-	free(volumePath);
-
-	return true;
+	return GetLibraryPath(path, length, guid);
 }
 
 class StringArray
@@ -438,6 +461,11 @@ int wmain(int argc, wchar_t *argv[]) {
 		if (wcscmp(argv[i], L"/openxr") == 0)
 		{
 			dlls.add(moduleDir + std::string("\\LibReviveXR64.dll"));
+		}
+		else if (wcscmp(argv[i], L"/openvr") == 0)
+		{
+			dlls.add(moduleDir + std::string("\\openvr_api64.dll"));
+			dlls.add(moduleDir + std::string("\\LibRevive64.dll"));
 		}
 		else if (wcscmp(argv[i], L"/proxy") == 0)
 		{
