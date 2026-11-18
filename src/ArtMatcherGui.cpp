@@ -55,6 +55,8 @@ namespace
 	constexpr int kIdBtnSettings = 109;
 	constexpr int kIdBtnHelp = 113;
 	constexpr int kIdBtnPrev = 110;
+	constexpr int kIdEditTitle = 114;
+	constexpr int kIdBtnSetTitle = 115;
 	constexpr int kIdLinkBuyCoffee = 111;
 	constexpr int kIdLinkSponsor = 112;
 
@@ -363,6 +365,7 @@ namespace
 		HWND editSearch = nullptr, btnSearch = nullptr, listboxGames = nullptr;
 		HWND listviewGridsPortrait = nullptr, listviewGridsHome = nullptr;
 		HWND labelGridsPortrait = nullptr, labelGridsHome = nullptr;
+		HWND btnSetTitle = nullptr;
 		HWND btnBack = nullptr, btnSkip = nullptr, titleLabel = nullptr, counterLabel = nullptr, statusLabel = nullptr;
 		HWND finalLabel = nullptr, btnClose = nullptr, btnSettings = nullptr;
 		HWND btnHelp = nullptr;
@@ -641,6 +644,33 @@ namespace
 		}
 	}
 
+	// Saves the text in the title field as this game's name. Works for any
+	// game, including ones SteamGridDB has no entry for; the override is
+	// persisted so every later scan applies it.
+	void SetTitleFromEdit()
+	{
+		wchar_t buf[512];
+		GetWindowTextW(g.titleLabel, buf, 512);
+		std::string title = WideToUtf8(buf);
+		const auto first = title.find_first_not_of(" \t");
+		if (first == std::string::npos)
+		{
+			SetStatus(L"The title can't be empty.");
+			SetWindowTextW(g.titleLabel, Utf8ToWide(g.games[g.currentIndex].title).c_str());
+			return;
+		}
+		title = title.substr(first, title.find_last_not_of(" \t") - first + 1);
+
+		MetaGame& game = g.games[g.currentIndex];
+		game.title = title;
+		for (auto& matched : g.matchedGames)
+			if (matched.canonicalName == game.canonicalName)
+				matched.title = title;
+		TitleOverrides::Set(game.canonicalName, title);
+		SetWindowTextW(g.titleLabel, Utf8ToWide(title).c_str());
+		SetStatus(L"Title saved.");
+	}
+
 	void SkipCurrent()
 	{
 		// Only actually marks-as-skipped (and only ever touches a file)
@@ -717,6 +747,8 @@ namespace
 				DoSearch();
 			else if (LOWORD(wParam) == kIdBtnSkip && HIWORD(wParam) == BN_CLICKED)
 				SkipCurrent();
+			else if (LOWORD(wParam) == kIdBtnSetTitle && HIWORD(wParam) == BN_CLICKED)
+				SetTitleFromEdit();
 			else if (LOWORD(wParam) == kIdBtnPrev && HIWORD(wParam) == BN_CLICKED)
 				GoToPrev();
 			else if (LOWORD(wParam) == kIdBtnBack && HIWORD(wParam) == BN_CLICKED)
@@ -898,8 +930,10 @@ namespace
 		g.captionHome = CreateWindowExW(0, L"STATIC", L"Home art", WS_CHILD | WS_VISIBLE,
 			kHomeX, kCaptionY, kHomeW, kCaptionH, hwnd, nullptr, nullptr, nullptr);
 
-		g.titleLabel = CreateWindowExW(0, L"STATIC", L"", WS_CHILD | WS_VISIBLE,
-			20, 384, 860, 24, hwnd, nullptr, nullptr, nullptr);
+		g.titleLabel = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"", WS_CHILD | WS_VISIBLE | ES_AUTOHSCROLL,
+			20, 380, 760, 26, hwnd, (HMENU)(INT_PTR)kIdEditTitle, nullptr, nullptr);
+		g.btnSetTitle = CreateWindowExW(0, L"BUTTON", L"Set title", WS_CHILD | WS_VISIBLE,
+			786, 380, 94, 26, hwnd, (HMENU)(INT_PTR)kIdBtnSetTitle, nullptr, nullptr);
 		g.counterLabel = CreateWindowExW(0, L"STATIC", L"", WS_CHILD | WS_VISIBLE,
 			20, 410, 600, 20, hwnd, nullptr, nullptr, nullptr);
 
@@ -946,7 +980,7 @@ namespace
 		g.btnClose = CreateWindowExW(0, L"BUTTON", L"Close", WS_CHILD,
 			720, 730, 160, 28, hwnd, (HMENU)(INT_PTR)kIdBtnClose, nullptr, nullptr);
 
-		for (HWND h : { g.captionMeta, g.captionLibrary, g.captionHome, g.titleLabel, g.counterLabel,
+		for (HWND h : { g.captionMeta, g.captionLibrary, g.captionHome, g.titleLabel, g.btnSetTitle, g.counterLabel,
 				g.editSearch, g.btnSearch, g.listboxGames,
 				g.listviewGridsPortrait, g.listviewGridsHome, g.labelGridsPortrait, g.labelGridsHome,
 				g.btnBack, g.btnSkip, g.btnPrev,
