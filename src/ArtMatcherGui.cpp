@@ -55,6 +55,8 @@ namespace
 	constexpr int kIdBtnSettings = 109;
 	constexpr int kIdBtnHelp = 113;
 	constexpr int kIdBtnPrev = 110;
+	constexpr int kIdBtnMetaPortrait = 116;
+	constexpr int kIdBtnMetaHome = 117;
 	constexpr int kIdEditTitle = 114;
 	constexpr int kIdBtnSetTitle = 115;
 	constexpr int kIdLinkBuyCoffee = 111;
@@ -331,6 +333,64 @@ namespace
 		stream->Release();
 	}
 
+	// Renders a copy of the Meta store image at a Steam grid size and saves
+	// it as a PNG at dstPath. The source file is only read, never modified.
+	// The image is shown whole (contain-fit) over a heavily blurred, cover-
+	// filled copy of itself, so a square cover fills a tall or wide grid
+	// without cropping or bars.
+	bool RenderMetaArtCopy(const std::string& srcPath, const std::string& dstPath, int outW, int outH)
+	{
+		// Load through memory so the source file isn't held open.
+		std::ifstream in(srcPath, std::ios::binary);
+		std::vector<char> data((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+		if (data.empty())
+			return false;
+		IStream* stream = SHCreateMemStream((const BYTE*)data.data(), (UINT)data.size());
+		if (!stream)
+			return false;
+
+		bool ok = false;
+		{
+			Gdiplus::Bitmap src(stream);
+			if (src.GetLastStatus() == Gdiplus::Ok && src.GetWidth() > 0 && src.GetHeight() > 0)
+			{
+				const double sw = src.GetWidth(), sh = src.GetHeight();
+
+				// Cheap blur: shrink the cover-filled image to a few pixels,
+				// then stretch it back up with bicubic smoothing.
+				const int smallW = (std::max)(2, outW / 50), smallH = (std::max)(2, outH / 50);
+				Gdiplus::Bitmap blurSrc(smallW, smallH, PixelFormat32bppARGB);
+				{
+					Gdiplus::Graphics sg(&blurSrc);
+					sg.SetInterpolationMode(Gdiplus::InterpolationModeHighQualityBicubic);
+					const double coverScale = (std::max)((double)smallW / sw, (double)smallH / sh);
+					const double cw = sw * coverScale, ch = sh * coverScale;
+					sg.DrawImage(&src, Gdiplus::RectF((float)((smallW - cw) / 2), (float)((smallH - ch) / 2), (float)cw, (float)ch));
+				}
+
+				Gdiplus::Bitmap out(outW, outH, PixelFormat32bppARGB);
+				{
+					Gdiplus::Graphics og(&out);
+					og.SetInterpolationMode(Gdiplus::InterpolationModeHighQualityBicubic);
+					og.SetPixelOffsetMode(Gdiplus::PixelOffsetModeHalf);
+					og.DrawImage(&blurSrc, Gdiplus::Rect(0, 0, outW, outH));
+					Gdiplus::SolidBrush dim(Gdiplus::Color(110, 0, 0, 0));
+					og.FillRectangle(&dim, 0, 0, outW, outH);
+
+					const double fit = (std::min)(outW / sw, outH / sh);
+					const double fw = sw * fit, fh = sh * fit;
+					og.DrawImage(&src, Gdiplus::RectF((float)((outW - fw) / 2), (float)((outH - fh) / 2), (float)fw, (float)fh));
+				}
+
+				CLSID clsid = {};
+				if (GetEncoderClsid(L"image/png", &clsid) >= 0)
+					ok = out.Save(Utf8ToWide(dstPath).c_str(), &clsid, nullptr) == Gdiplus::Ok;
+			}
+		}
+		stream->Release();
+		return ok;
+	}
+
 	HBITMAP DownloadAndScaleThumbnail(SteamGridDb& client, const std::string& url, int thumbW, int thumbH)
 	{
 		auto bytes = client.DownloadBytes(url);
@@ -365,7 +425,7 @@ namespace
 		HWND editSearch = nullptr, btnSearch = nullptr, listboxGames = nullptr;
 		HWND listviewGridsPortrait = nullptr, listviewGridsHome = nullptr;
 		HWND labelGridsPortrait = nullptr, labelGridsHome = nullptr;
-		HWND btnSetTitle = nullptr;
+		HWND btnSetTitle = nullptr, btnMetaPortrait = nullptr, btnMetaHome = nullptr;
 		HWND btnBack = nullptr, btnSkip = nullptr, titleLabel = nullptr, counterLabel = nullptr, statusLabel = nullptr;
 		HWND finalLabel = nullptr, btnClose = nullptr, btnSettings = nullptr;
 		HWND btnHelp = nullptr;
@@ -583,6 +643,55 @@ namespace
 		InvalidateRect(g.hwnd, nullptr, TRUE);
 	}
 
+	// For games SteamGridDB has no art for: saves a resized COPY of the Meta
+	// store image as this kind's art. The Meta file itself is left alone.
+	void UseMetaArt(ArtKind kind)
+	{
+		MetaGame& game = g.games[g.currentIndex];
+		if (game.coverArtPath.empty())
+		{
+			SetStatus(L"This game has no Meta art to use.");
+			return;
+		}
+
+		std::string stem = ComputeStem(game.canonicalName, g.artDir, kind);
+
+		// The preview Image holds its file open; release it before the
+		// file is replaced.
+		Gdiplus::Image*& target = kind == ArtKind::Portrait ? g.currentArtPortrait : g.currentArtHome;
+		delete target;
+		target = nullptr;
+
+		// Render first, to a temp name, so a failure never costs the art
+		// that was already there.
+		const std::string tmp = stem + ".tmp";
+		const bool portrait = kind == ArtKind::Portrait;
+		if (!RenderMetaArtCopy(game.coverArtPath, tmp, portrait ? 600 : 920, portrait ? 900 : 430))
+		{
+			std::error_code ec;
+			fs::remove(tmp, ec);
+			RefreshArtStatus();
+			SetStatus(L"Couldn't create art from the Meta image.");
+			return;
+		}
+
+		ClearExisting(stem);
+		std::error_code ec;
+		fs::rename(tmp, stem + ".png", ec);
+		if (ec)
+		{
+			fs::remove(tmp, ec);
+			RefreshArtStatus();
+			SetStatus(L"Couldn't save the art.");
+			return;
+		}
+		ApplyBadge(stem + ".png", kind);
+
+		g.matchedGames.push_back(game);
+		RefreshArtStatus();
+		SetStatus(portrait ? L"Library cover created from the Meta art." : L"Home art created from the Meta art.");
+	}
+
 	void ChooseGrid(ArtKind kind, int idx)
 	{
 		std::vector<SgdbGrid>& results = kind == ArtKind::Portrait ? g.gridResultsPortrait : g.gridResultsHome;
@@ -696,6 +805,8 @@ namespace
 		const MetaGame& game = g.games[g.currentIndex];
 
 		EnableWindow(g.btnPrev, g.currentIndex > 0);
+		for (HWND h : { g.btnMetaPortrait, g.btnMetaHome })
+			EnableWindow(h, !game.coverArtPath.empty());
 
 		delete g.coverArt;
 		g.coverArt = game.coverArtPath.empty() ? nullptr : new Gdiplus::Image(Utf8ToWide(game.coverArtPath).c_str());
@@ -749,6 +860,10 @@ namespace
 				SkipCurrent();
 			else if (LOWORD(wParam) == kIdBtnSetTitle && HIWORD(wParam) == BN_CLICKED)
 				SetTitleFromEdit();
+			else if (LOWORD(wParam) == kIdBtnMetaPortrait && HIWORD(wParam) == BN_CLICKED)
+				UseMetaArt(ArtKind::Portrait);
+			else if (LOWORD(wParam) == kIdBtnMetaHome && HIWORD(wParam) == BN_CLICKED)
+				UseMetaArt(ArtKind::Home);
 			else if (LOWORD(wParam) == kIdBtnPrev && HIWORD(wParam) == BN_CLICKED)
 				GoToPrev();
 			else if (LOWORD(wParam) == kIdBtnBack && HIWORD(wParam) == BN_CLICKED)
@@ -967,6 +1082,10 @@ namespace
 		// "move to another game" control is this row's Skip/Next button,
 		// so keeping both together reads as one pair instead of two
 		// separate, overlapping ways to advance.
+		g.btnMetaPortrait = CreateWindowExW(0, L"BUTTON", L"Meta art as cover", WS_CHILD | WS_VISIBLE,
+			230, 730, 170, 28, hwnd, (HMENU)(INT_PTR)kIdBtnMetaPortrait, nullptr, nullptr);
+		g.btnMetaHome = CreateWindowExW(0, L"BUTTON", L"Meta art as Home art", WS_CHILD | WS_VISIBLE,
+			406, 730, 170, 28, hwnd, (HMENU)(INT_PTR)kIdBtnMetaHome, nullptr, nullptr);
 		g.btnPrev = CreateWindowExW(0, L"BUTTON", L"< Prev", WS_CHILD | WS_VISIBLE,
 			630, 730, 80, 28, hwnd, (HMENU)(INT_PTR)kIdBtnPrev, nullptr, nullptr);
 		g.btnSkip = CreateWindowExW(0, L"BUTTON", L"Skip this game", WS_CHILD | WS_VISIBLE,
@@ -980,7 +1099,7 @@ namespace
 		g.btnClose = CreateWindowExW(0, L"BUTTON", L"Close", WS_CHILD,
 			720, 730, 160, 28, hwnd, (HMENU)(INT_PTR)kIdBtnClose, nullptr, nullptr);
 
-		for (HWND h : { g.captionMeta, g.captionLibrary, g.captionHome, g.titleLabel, g.btnSetTitle, g.counterLabel,
+		for (HWND h : { g.captionMeta, g.captionLibrary, g.captionHome, g.titleLabel, g.btnSetTitle, g.btnMetaPortrait, g.btnMetaHome, g.counterLabel,
 				g.editSearch, g.btnSearch, g.listboxGames,
 				g.listviewGridsPortrait, g.listviewGridsHome, g.labelGridsPortrait, g.labelGridsHome,
 				g.btnBack, g.btnSkip, g.btnPrev,
